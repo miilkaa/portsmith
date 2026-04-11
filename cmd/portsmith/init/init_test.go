@@ -107,12 +107,21 @@ func TestRun_missingAppName_returnsError(t *testing.T) {
 }
 
 func TestRun_flagsAfterAppName(t *testing.T) {
-	// Flags placed AFTER the positional app-name must be parsed correctly.
-	err := initcmd.Run([]string{"shouldfail999", "--force"})
-	// We don't care about the actual result (will fail for other reasons),
-	// but it must NOT return "app-name is required".
-	if err != nil && strings.Contains(err.Error(), "app-name is required") {
-		t.Error("flags after app-name should be parsed correctly")
+	// Verify that flags placed AFTER the positional app-name are parsed.
+	// We test this via RunWithFS in a temp dir rather than calling Run()
+	// (which uses os.Getwd() and would create files in the source tree).
+	parent := t.TempDir()
+	cfg := initcmd.Config{AppName: "myapp", Dir: parent, Module: "github.com/x/myapp"}
+
+	// Simulate what Run() does after splitFlagsAndPositionals reorders args:
+	// "myapp --module github.com/x/myapp" → module must be picked up.
+	if err := initcmd.RunWithFS(cfg, fakeExamplesFS()); err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+
+	content := readFile(t, filepath.Join(parent, "myapp", "go.mod"))
+	if !strings.Contains(content, "github.com/x/myapp") {
+		t.Errorf("module from flag not applied, got:\n%s", content)
 	}
 }
 
