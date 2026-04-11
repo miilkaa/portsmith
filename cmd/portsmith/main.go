@@ -2,10 +2,11 @@
 //
 // Available commands:
 //
-//	portsmith gen   [--dry-run] [--all] [<pkg-dir>...]  — generate ports.go
-//	portsmith new   <pkg-dir>                            — scaffold a new package
-//	portsmith mock  [<pkg-dir>...]                       — generate mocks via mockery
-//	portsmith check [<pkg-dir>...]                       — architecture linter
+//	portsmith init  <app-name> [--module <path>] [--force]   — scaffold a new application
+//	portsmith gen   [--dry-run] [--all] [<pkg-dir>...]        — generate ports.go
+//	portsmith new   <pkg-dir>                                 — scaffold a new package
+//	portsmith mock  [<pkg-dir>...]                            — generate mocks via mockery
+//	portsmith check [<pkg-dir>...]                            — architecture linter
 package main
 
 import (
@@ -14,6 +15,7 @@ import (
 
 	"github.com/miilkaa/portsmith/cmd/portsmith/check"
 	gencmd "github.com/miilkaa/portsmith/cmd/portsmith/gen"
+	initcmd "github.com/miilkaa/portsmith/cmd/portsmith/init"
 	mockcmd "github.com/miilkaa/portsmith/cmd/portsmith/mock"
 	newcmd "github.com/miilkaa/portsmith/cmd/portsmith/new"
 )
@@ -29,6 +31,8 @@ func main() {
 
 	var err error
 	switch cmd {
+	case "init":
+		err = initcmd.Run(args)
 	case "gen":
 		err = gencmd.Run(args)
 	case "new":
@@ -55,6 +59,13 @@ func printUsage() {
 	fmt.Print(`portsmith — Go Clean Architecture toolkit
 
 Usage:
+  portsmith init  <app-name> [--module <path>] [--force]
+      Scaffold a new application with Clean Architecture layout.
+      Creates cmd/server/main.go, go.mod, Makefile, .env.example,
+      and reference examples in internal/ (gitignored).
+      --module  Go module path (default: app-name)
+      --force   skip dirty-directory check and overwrite existing files
+
   portsmith gen   [--dry-run] [--all] [<pkg-dir>...]
       Generate ports.go for one or more packages.
       --all     scan all packages under internal/
@@ -74,6 +85,8 @@ Usage:
       Print this help message.
 
 Examples:
+  portsmith init myapp
+  portsmith init myapp --module github.com/acme/myapp
   portsmith gen --all
   portsmith gen internal/orders
   portsmith new internal/products
