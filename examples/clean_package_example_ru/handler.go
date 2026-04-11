@@ -7,7 +7,7 @@ package example
 //  2. Знает про HTTP: gin.Context, статус-коды, JSON.
 //  3. НЕ знает про SQL, gorm, database/sql.
 //  4. НЕ содержит бизнес-логики — только:
-//     - распарсить запрос → вызвать сервис → сформировать ответ.
+//     распарсить запрос → вызвать сервис → сформировать ответ.
 //  5. Ошибки сервиса не преобразует сам — error middleware сервера
 //     делает это автоматически через apperrors.
 //
@@ -40,7 +40,7 @@ func NewHandler(service UserService) *Handler {
 //
 // Пример:
 //
-//	v1 := srv.Group("/api/v1")
+//	v1 := srv.Router().Group("/api/v1")
 //	userHandler.Routes(v1)
 func (h *Handler) Routes(rg *gin.RouterGroup) {
 	users := rg.Group("/users")
@@ -97,8 +97,8 @@ func (h *Handler) update(c *gin.Context) {
 		return
 	}
 
-	// callerID в реальном проекте берётся из JWT/session middleware.
-	// Здесь для простоты используем заглушку.
+	// В реальном проекте callerID берётся из JWT/session middleware.
+	// Здесь используем заглушку для простоты примера.
 	callerID := uint(1)
 
 	user, err := h.service.Update(c.Request.Context(), id, toUpdateParams(req), callerID)

@@ -1,37 +1,38 @@
 package example_test
 
-// service_test.go — unit-тесты бизнес-логики.
+// service_test.go — unit tests for the business logic layer.
 //
-// Ключевая идея: тестируем Service в полной изоляции от БД.
-// Вместо реального репозитория передаём mockRepository — простую
-// ручную реализацию UserRepository для тестов.
+// Key idea: we test Service in complete isolation from the database.
+// Instead of a real repository we inject mockRepository — a simple
+// in-memory implementation of UserRepository used only in tests.
 //
-// В реальном проекте вместо ручного мока используется сгенерированный:
+// In a real project the mock is generated, not handwritten:
 //
 //	portsmith mock ./internal/example
-//	# создаёт: internal/example/mocks/mock_user_repository.go
+//	# produces: internal/example/mocks/mock_user_repository.go
 //
-// Но для примера пишем мок вручную — чтобы не зависеть от внешних инструментов.
+// We write the mock by hand here to avoid any external tool dependency
+// in the example, keeping it self-contained.
 
 import (
 	"context"
 	"errors"
 	"testing"
 
-	example "github.com/miilkaa/portsmith/examples/clean_package_example"
+	example "github.com/miilkaa/portsmith/examples/clean_package_example_en"
 	"github.com/miilkaa/portsmith/pkg/pagination"
 )
 
-// mockRepository — тестовая реализация UserRepository.
-// Хранит данные в памяти. В реальном проекте используй mockery.
+// mockRepository is the test double for UserRepository.
+// Data is stored in memory. Use mockery in production projects.
 type mockRepository struct {
 	users  map[uint]*example.User
 	nextID uint
 
-	// Перехватчики для симуляции ошибок в конкретных тестах.
-	createErr    error
-	findByIDErr  error
-	findByEmail  func(email string) (*example.User, error)
+	// Hooks for simulating errors in specific test scenarios.
+	createErr   error
+	findByIDErr error
+	findByEmail func(email string) (*example.User, error)
 }
 
 func newMockRepository() *mockRepository {
@@ -92,7 +93,7 @@ func (m *mockRepository) List(ctx context.Context, filter example.ListFilter, pa
 	return result, int64(len(result)), nil
 }
 
-// --- Тесты ---
+// --- Tests ---
 
 func TestService_Create_success(t *testing.T) {
 	repo := newMockRepository()
@@ -109,7 +110,7 @@ func TestService_Create_success(t *testing.T) {
 	if user.Email != "alice@example.com" {
 		t.Errorf("expected email alice@example.com, got %s", user.Email)
 	}
-	// Роль по умолчанию должна быть RoleUser.
+	// Default role must be RoleUser when none is specified.
 	if user.Role != example.RoleUser {
 		t.Errorf("expected role %s, got %s", example.RoleUser, user.Role)
 	}
@@ -155,7 +156,7 @@ func TestService_Update_cannotDeactivateSelf(t *testing.T) {
 	active := false
 	_, err = svc.Update(context.Background(), user.ID, example.UpdateParams{
 		Active: &active,
-	}, user.ID) // callerID == user.ID — деактивируем себя
+	}, user.ID) // callerID == user.ID — self-deactivation attempt
 
 	if !errors.Is(err, example.ErrCannotDeactivateSelf) {
 		t.Errorf("expected ErrCannotDeactivateSelf, got %v", err)
@@ -174,7 +175,7 @@ func TestService_Update_success(t *testing.T) {
 	newName := "Carol Updated"
 	updated, err := svc.Update(context.Background(), user.ID, example.UpdateParams{
 		Name: &newName,
-	}, 999) // другой callerID
+	}, 999) // different callerID
 
 	if err != nil {
 		t.Fatalf("unexpected error: %v", err)

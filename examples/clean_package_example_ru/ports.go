@@ -28,7 +28,7 @@ import (
 // Это позволяет тестировать сервис без базы данных — достаточно мок-репозитория.
 //
 // Compile-time проверка: var _ UserRepository = (*Repository)(nil)
-// Если Repository не реализует интерфейс — ошибка компиляции, а не runtime.
+// Если Repository не реализует интерфейс — ошибка компиляции, а не runtime-паника.
 type UserRepository interface {
 	Create(ctx context.Context, user *User) error
 	FindByID(ctx context.Context, id uint) (*User, error)

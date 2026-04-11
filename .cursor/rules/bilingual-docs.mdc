@@ -1,0 +1,56 @@
+---
+description: Bilingual documentation and comment convention for portsmith
+alwaysApply: true
+---
+
+# Bilingual Convention
+
+All written content in this repository must follow a strict bilingual (EN/RU) convention.
+
+## Code Comments
+
+**All inline and doc comments in Go source files must be in English.**
+
+```go
+// ✅ GOOD
+// User is the central domain entity.
+// GORM tags are a pragmatic compromise to support AutoMigrate.
+type User struct { ... }
+
+// ❌ BAD
+// User — центральная доменная сущность.
+type User struct { ... }
+```
+
+## Example Packages
+
+The `examples/` directory always contains two parallel versions:
+
+- `examples/clean_package_example_en/` — full example with **English** comments
+- `examples/clean_package_example_ru/` — same code with **Russian** comments
+
+When adding a new example package, always create both `_en` and `_ru` variants.
+
+## Documentation Files
+
+Docs are split into two locale folders:
+
+```
+docs/
+├── en/   ← primary, English
+└── ru/   ← Russian translation, kept in sync with en/
+```
+
+When updating `docs/en/*.md`, also update the matching file in `docs/ru/`.
+
+## README
+
+- `README.md` — English (canonical)
+- `README.ru.md` — Russian translation
+
+When updating `README.md`, reflect the changes in `README.ru.md`.
+
+## Obsidian Notes
+
+Obsidian notes in the vault are written in **Russian** (they are internal
+development logs, not public documentation).

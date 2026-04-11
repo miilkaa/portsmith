@@ -1,9 +1,9 @@
 package example
 
-// Доменные ошибки определяются здесь — в слое домена.
+// errors.go — доменные ошибки пакета.
 //
 // Правило: ошибки не знают про HTTP-коды. Они описывают бизнес-ситуацию.
-// Middleware в server автоматически маппит типы apperrors на HTTP-статусы:
+// Middleware в pkg/server автоматически маппит типы apperrors на HTTP-статусы:
 //
 //	apperrors.NotFound    → 404
 //	apperrors.Conflict    → 409

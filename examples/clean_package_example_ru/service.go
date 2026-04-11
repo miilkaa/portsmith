@@ -66,7 +66,7 @@ func (s *Service) Create(ctx context.Context, params CreateParams) (*User, error
 	return user, nil
 }
 
-// GetByID возвращает пользователя по ID.
+// GetByID возвращает пользователя по первичному ключу.
 func (s *Service) GetByID(ctx context.Context, id uint) (*User, error) {
 	return s.repo.FindByID(ctx, id)
 }
@@ -111,7 +111,7 @@ func (s *Service) Delete(ctx context.Context, id uint) error {
 	return s.repo.Delete(ctx, id)
 }
 
-// List возвращает список пользователей с фильтрацией и пагинацией.
+// List возвращает страницу пользователей с фильтрацией и пагинацией.
 func (s *Service) List(ctx context.Context, filter ListFilter, page pagination.OffsetPage) ([]*User, int64, error) {
 	return s.repo.List(ctx, filter, page)
 }

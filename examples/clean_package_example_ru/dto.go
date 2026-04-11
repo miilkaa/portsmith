@@ -31,7 +31,7 @@ type UpdateUserRequest struct {
 }
 
 // UserResponse — представление пользователя в API-ответе.
-// Не включает чувствительные данные (пароли, токены).
+// Чувствительные данные (пароли, токены) намеренно исключены.
 type UserResponse struct {
 	ID     uint     `json:"id"`
 	Email  string   `json:"email"`
@@ -42,8 +42,8 @@ type UserResponse struct {
 
 // ListUsersResponse — ответ на GET /users со списком и метаданными пагинации.
 type ListUsersResponse struct {
-	Items  []*UserResponse `json:"items"`
-	Total  int64           `json:"total"`
-	Page   int             `json:"page"`
-	Limit  int             `json:"limit"`
+	Items []*UserResponse `json:"items"`
+	Total int64           `json:"total"`
+	Page  int             `json:"page"`
+	Limit int             `json:"limit"`
 }

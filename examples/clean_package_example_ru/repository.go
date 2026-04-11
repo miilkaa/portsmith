@@ -10,8 +10,8 @@ package example
 //     Это критично: сервис не должен видеть gorm.ErrRecordNotFound.
 //
 // Как тестировать:
-//   - Интеграционные тесты с testkit.TestDB (SQLite in-memory).
-//   - В repository_test.go.
+//   - Интеграционные тесты с testkit.NewTestDB (SQLite in-memory).
+//   - Тесты в repository_test.go.
 
 import (
 	"context"

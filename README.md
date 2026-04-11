@@ -107,7 +107,7 @@ Handler → ServicePort ← Service → RepositoryPort ← Repository
 | `dto.go` | HTTP | Go types, validator | SQL |
 | `mappers.go` | Transform | domain, dto | anything |
 
-See [docs/architecture.md](docs/architecture.md) for detailed explanation.
+See [docs/en/architecture.md](docs/en/architecture.md) for detailed explanation.
 
 ---
 
@@ -312,7 +312,7 @@ Three testing levels:
 | Handler | `testkit.NewHTTPSuite` | None |
 | Repository | `testkit.NewTestDB` (SQLite) | SQLite in-memory |
 
-See [docs/tdd-guide.md](docs/tdd-guide.md) for patterns and examples.
+See [docs/en/tdd-guide.md](docs/en/tdd-guide.md) for patterns and examples.
 
 ---
 
@@ -333,9 +333,14 @@ architecture:
 
 ## Example package
 
-A complete reference implementation is available in [`examples/clean_package_example`](examples/clean_package_example).
+A complete reference implementation is available in two locales:
 
-It demonstrates all layers with detailed comments explaining every design decision.
+- [`examples/clean_package_example_en`](examples/clean_package_example_en) — comments in **English**
+- [`examples/clean_package_example_ru`](examples/clean_package_example_ru) — comments in **Russian**
+
+Both examples demonstrate all layers with detailed comments explaining every design decision.
+
+> Also available in Russian: [README.ru.md](README.ru.md)
 
 ---
 

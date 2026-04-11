@@ -29,11 +29,11 @@ import "time"
 // а здесь лежали бы только бизнес-поля. Для большинства проектов тегов на домене
 // достаточно — разделяй при необходимости.
 type User struct {
-	ID        uint      `gorm:"primaryKey"`
-	Email     string    `gorm:"uniqueIndex;not null"`
-	Name      string    `gorm:"not null"`
-	Role      UserRole  `gorm:"default:'user'"`
-	Active    bool      `gorm:"default:true"`
+	ID        uint     `gorm:"primaryKey"`
+	Email     string   `gorm:"uniqueIndex;not null"`
+	Name      string   `gorm:"not null"`
+	Role      UserRole `gorm:"default:'user'"`
+	Active    bool     `gorm:"default:true"`
 	CreatedAt time.Time
 	UpdatedAt time.Time
 }
@@ -59,7 +59,7 @@ type CreateParams struct {
 	Role  UserRole
 }
 
-// UpdateParams — входные данные для обновления.
+// UpdateParams — входные данные для частичного обновления.
 // Указатели означают "поле передано" / "поле не передано" (partial update).
 type UpdateParams struct {
 	Name   *string
