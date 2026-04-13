@@ -10,13 +10,24 @@ This document explains the Clean Architecture approach used in portsmith-based p
 Handler → ServicePort ← Service → RepositoryPort ← Repository
    ↑                                                     ↑
 HTTP layer                                          Data layer
-(knows gin)                                         (knows gorm)
+(knows gin OR chi)                                  (knows gorm OR sqlx)
 
               Service + ports = Domain layer
               (knows nothing about HTTP or SQL)
 ```
 
-The arrows show **import direction**. If you find yourself importing `net/http` inside `service.go` or `gorm` inside `handler.go`, that is an architecture violation.
+The arrows show **import direction**. If you find yourself importing `net/http` inside `service.go` or database drivers inside `handler.go`, that is an architecture violation.
+
+## Technology stacks
+
+portsmith supports two combinations; pick one per project:
+
+- **gin-gorm** — Gin handlers, GORM repositories (default scaffolding).
+- **chi-sqlx** — `net/http` + Chi routers, sqlx + PostgreSQL (pgx stdlib driver).
+
+Configure explicitly with `portsmith.yaml` (`stack: chi-sqlx`) or `--stack` on `portsmith new` / `portsmith check`. Otherwise the CLI infers the stack from `go.mod` (Chi module → chi-sqlx, Gin → gin-gorm).
+
+Runtime packages: `pkg/server` + `pkg/database` for gin-gorm; `pkg/chiserver` + `pkg/sqlxdb` for chi-sqlx.
 
 ## Layers and their rules
 
@@ -25,8 +36,8 @@ The arrows show **import direction**. If you find yourself importing `net/http` 
 Files: `domain.go`, `errors.go`
 
 - Pure Go types — structs, enums, constants
-- No imports from `database/sql`, `net/http`, `gorm`, `gin`
-- GORM struct tags are acceptable (pragmatic compromise — see [decisions](decisions.md))
+- No imports from `database/sql`, `net/http`, `gorm`, `gin`, or `chi`
+- GORM struct tags are acceptable on the gin-gorm stack; use `db` tags with sqlx on chi-sqlx (pragmatic compromise — see [decisions](decisions.md))
 - Domain errors use `apperrors` constructors but contain no HTTP status codes
 
 ### Interface layer
@@ -51,8 +62,8 @@ File: `service.go`
 File: `repository.go`
 
 - Implements `XxxRepository` interface
-- The only layer allowed to use `gorm` or `database/sql`
-- Translates storage errors into domain errors (e.g. `gorm.ErrRecordNotFound` → `ErrUserNotFound`)
+- The only layer allowed to use `gorm`, `sqlx`, or `database/sql`
+- Translates storage errors into domain errors (e.g. `gorm.ErrRecordNotFound` or `sql.ErrNoRows` → `ErrUserNotFound`)
 - No business logic — only data access
 
 ### Handler layer
@@ -61,7 +72,7 @@ Files: `handler.go`, `dto.go`, `mappers.go`
 
 - Implements HTTP endpoints
 - Depends on `XxxService` interface — never on `*Service` directly
-- The only layer allowed to use `gin` or `net/http`
+- The only layer allowed to use `gin`, `chi`, or `net/http` (choose one HTTP style per project)
 - Converts: HTTP request → domain params → call service → domain result → HTTP response
 - No business logic, no SQL
 
@@ -93,10 +104,10 @@ func NewService(repo *Repository) *Service     // ✗ — breaks testability
 
 ## Validating the architecture
 
-Run `portsmith check` to verify all rules are followed:
+Run `portsmith check` to verify all rules are followed (it prints the resolved stack; use `--stack` to override):
 
 ```bash
 portsmith check ./internal/...
 ```
 
-See [portsmith check](../cmd/portsmith/check/check.go) for the complete list of rules.
+See [portsmith check](../../cmd/portsmith/check/check.go) for the complete list of rules.

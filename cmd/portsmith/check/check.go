@@ -17,6 +17,8 @@ import (
 	"os"
 	"path/filepath"
 	"strings"
+
+	"github.com/miilkaa/portsmith/internal/stack"
 )
 
 // Violation describes a single architectural rule violation.
@@ -36,11 +38,18 @@ func (v Violation) String() string {
 // Run executes the check command for the given arguments.
 // Arguments can be package directories or Go-style patterns (./internal/...).
 func Run(args []string) error {
-	if len(args) == 0 {
-		args = []string{"./..."}
+	rest, stackFlag := parseStackArgs(args)
+	if len(rest) == 0 {
+		rest = []string{"./..."}
 	}
 
-	dirs, err := resolveDirs(args)
+	stk, err := stack.ResolveFromWD(stackFlag)
+	if err != nil {
+		return err
+	}
+	fmt.Printf("  stack: %s\n", stk)
+
+	dirs, err := resolveDirs(rest)
 	if err != nil {
 		return err
 	}
@@ -62,6 +71,22 @@ func Run(args []string) error {
 		return fmt.Errorf("%d architecture violation(s) found", len(allViolations))
 	}
 	return nil
+}
+
+func parseStackArgs(args []string) (rest []string, stackFlag string) {
+	for i := 0; i < len(args); i++ {
+		a := args[i]
+		switch {
+		case a == "--stack":
+			if i+1 < len(args) {
+				stackFlag = args[i+1]
+				i++
+			}
+		default:
+			rest = append(rest, a)
+		}
+	}
+	return rest, stackFlag
 }
 
 // Violations checks a single package directory and returns all violations found.
@@ -109,11 +134,11 @@ func checkFile(fset *token.FileSet, f *ast.File, path, name string) []Violation 
 	isHandler := strings.HasPrefix(name, "handler") && name != "handler_test.go"
 	isService := name == "service.go"
 
-	// Rule 2: handler files must not import gorm or database/sql directly.
+	// Rule 2: handler files must not import DB drivers directly (stack-specific surface).
 	if isHandler {
 		for _, imp := range f.Imports {
 			impPath := strings.Trim(imp.Path.Value, `"`)
-			if strings.Contains(impPath, "gorm.io/gorm") || impPath == "database/sql" {
+			if forbiddenHandlerDBImport(impPath) {
 				pos := fset.Position(imp.Pos())
 				violations = append(violations, Violation{
 					File:    path,
@@ -124,11 +149,13 @@ func checkFile(fset *token.FileSet, f *ast.File, path, name string) []Violation 
 		}
 	}
 
-	// Rule 3: service files must not import net/http or gin.
+	// Rule 3: service files must not import HTTP or router frameworks.
 	if isService {
 		for _, imp := range f.Imports {
 			impPath := strings.Trim(imp.Path.Value, `"`)
-			if impPath == "net/http" || strings.Contains(impPath, "gin-gonic/gin") {
+			if impPath == "net/http" ||
+				strings.Contains(impPath, "gin-gonic/gin") ||
+				strings.Contains(impPath, "go-chi/chi") {
 				pos := fset.Position(imp.Pos())
 				violations = append(violations, Violation{
 					File:    path,
@@ -179,6 +206,19 @@ func checkFile(fset *token.FileSet, f *ast.File, path, name string) []Violation 
 	}
 
 	return violations
+}
+
+func forbiddenHandlerDBImport(impPath string) bool {
+	if impPath == "database/sql" {
+		return true
+	}
+	if strings.Contains(impPath, "gorm.io/gorm") {
+		return true
+	}
+	if strings.Contains(impPath, "jmoiron/sqlx") {
+		return true
+	}
+	return false
 }
 
 // resolveDirs expands Go-style patterns like ./internal/... into directory paths.

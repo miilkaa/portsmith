@@ -7,7 +7,8 @@ package gen_test
 //  2. CollectServiceCalls находит все методы сервиса, вызываемые в коде.
 //  3. MethodSigs парсит AST файла и возвращает сигнатуры методов.
 //  4. PortPrefix строит правильный префикс из имени директории.
-//  5. DetectModulePath читает module из go.mod в заданном корне.
+//  5. InferPortPrefix подхватывает WebPush из полей *Service/*Handler при «webpush» в имени папки.
+//  6. DetectModulePath читает module из go.mod в заданном корне.
 
 import (
 	"os"
@@ -73,18 +74,74 @@ func (h *Handler) A() {
 
 func TestPortPrefix_knownDirectories(t *testing.T) {
 	cases := []struct {
-		dir    string
-		want   string
+		dir  string
+		want string
 	}{
 		{"users", "Users"},
 		{"api_keys", "ApiKeys"},
 		{"orders", "Orders"},
+		{"webpush", "Webpush"},
 	}
 	for _, tc := range cases {
 		got := gen.PortPrefix(tc.dir)
 		if got != tc.want {
 			t.Errorf("dir=%q: expected prefix %q, got %q", tc.dir, tc.want, got)
 		}
+	}
+}
+
+func TestInferPortPrefix_webpushFromStructFields(t *testing.T) {
+	dir := t.TempDir()
+	// Simulates package webpush with idiomatic WebPush* interface names.
+	content := `package webpush
+
+type WebPushRepository interface{}
+
+type WebPushService interface{}
+
+type Repository struct{}
+
+type Service struct {
+	repo WebPushRepository
+}
+
+type Handler struct {
+	service WebPushService
+}
+`
+	if err := os.WriteFile(filepath.Join(dir, "bundle.go"), []byte(content), 0o644); err != nil {
+		t.Fatal(err)
+	}
+
+	pkg, err := gen.ParsePackage(dir)
+	if err != nil {
+		t.Fatal(err)
+	}
+	got, ok := gen.InferPortPrefix(pkg)
+	if !ok || got != "WebPush" {
+		t.Fatalf("InferPortPrefix: got %q, ok=%v", got, ok)
+	}
+}
+
+func TestInferPortPrefix_repoServiceMismatch(t *testing.T) {
+	dir := t.TempDir()
+	content := `package x
+
+type FooRepository interface{}
+type BarService interface{}
+type Service struct { repo FooRepository }
+type Handler struct { service BarService }
+type Repository struct{}
+`
+	if err := os.WriteFile(filepath.Join(dir, "x.go"), []byte(content), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	pkg, err := gen.ParsePackage(dir)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, ok := gen.InferPortPrefix(pkg); ok {
+		t.Fatal("expected no single prefix when repository and service prefixes differ")
 	}
 }
 
