@@ -212,6 +212,87 @@ func PortPrefix(dirBase string) string {
 	return strings.Join(parts, "")
 }
 
+// InferPortPrefix derives the interface name prefix from Handler and Service struct fields
+// when dependency types are named like WebPushRepository / WebPushService.
+//
+// This fixes directory names such as "webpush" where PortPrefix yields "Webpush" while
+// the codebase uses the idiomatic "WebPush".
+func InferPortPrefix(pkg *ast.Package) (string, bool) {
+	var repoPfx, svcPfx string
+	for _, f := range pkg.Files {
+		for _, decl := range f.Decls {
+			gd, ok := decl.(*ast.GenDecl)
+			if !ok || gd.Tok != token.TYPE {
+				continue
+			}
+			for _, spec := range gd.Specs {
+				ts, ok := spec.(*ast.TypeSpec)
+				if !ok {
+					continue
+				}
+				st, ok := ts.Type.(*ast.StructType)
+				if !ok {
+					continue
+				}
+				switch ts.Name.Name {
+				case "Handler", "Service":
+				default:
+					continue
+				}
+				for _, field := range st.Fields.List {
+					name, ok := typeNameForPortInference(field.Type)
+					if !ok {
+						continue
+					}
+					if p, ok := prefixFromPortTypeName(name, "Repository"); ok {
+						repoPfx = p
+					}
+					if p, ok := prefixFromPortTypeName(name, "Service"); ok {
+						svcPfx = p
+					}
+				}
+			}
+		}
+	}
+	switch {
+	case repoPfx != "" && svcPfx != "":
+		if repoPfx == svcPfx {
+			return repoPfx, true
+		}
+		return "", false
+	case repoPfx != "":
+		return repoPfx, true
+	case svcPfx != "":
+		return svcPfx, true
+	default:
+		return "", false
+	}
+}
+
+func prefixFromPortTypeName(typeName, suffix string) (string, bool) {
+	if !strings.HasSuffix(typeName, suffix) {
+		return "", false
+	}
+	base := strings.TrimSuffix(typeName, suffix)
+	if base == "" {
+		return "", false
+	}
+	return base, true
+}
+
+func typeNameForPortInference(expr ast.Expr) (string, bool) {
+	switch t := expr.(type) {
+	case *ast.StarExpr:
+		return typeNameForPortInference(t.X)
+	case *ast.Ident:
+		return t.Name, true
+	case *ast.SelectorExpr:
+		return t.Sel.Name, true
+	default:
+		return "", false
+	}
+}
+
 // --- Module path detection ---
 
 // DetectModulePath reads the module directive from go.mod in root.

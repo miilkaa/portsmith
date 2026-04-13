@@ -58,9 +58,6 @@ func Run(args []string) error {
 
 func genPackage(dir string, dryRun bool) error {
 	base := filepath.Base(dir)
-	prefix := gen.PortPrefix(base)
-	repoPort := prefix + "Repository"
-	svcPort := prefix + "Service"
 
 	pkgName, err := gen.PackageName(filepath.Join(dir, "service.go"))
 	if err != nil {
@@ -83,6 +80,13 @@ func genPackage(dir string, dryRun bool) error {
 	if err != nil {
 		return err
 	}
+
+	prefix := gen.PortPrefix(base)
+	if p, ok := gen.InferPortPrefix(pkg); ok {
+		prefix = p
+	}
+	repoPort := prefix + "Repository"
+	svcPort := prefix + "Service"
 
 	repoSigs := gen.MethodSigs(pkg, "Repository")
 	svcSigs := gen.MethodSigs(pkg, "Service")

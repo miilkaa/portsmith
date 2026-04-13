@@ -308,6 +308,8 @@ portsmith gen --all                    # all packages under internal/
 portsmith gen --dry-run internal/orders # preview without writing
 ```
 
+Interface names in `ports.go` use the folder name as a default prefix (`webpush` → `WebpushRepository`). If your `Handler` / `Service` structs already reference types like `WebPushRepository` / `WebPushService`, **gen** picks up that prefix so names stay consistent.
+
 ### `portsmith new`
 
 Scaffold a new package with all Clean Architecture files. The stack affects generated imports and types (Gin+GORM vs Chi+sqlx).
