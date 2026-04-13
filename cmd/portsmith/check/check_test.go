@@ -48,6 +48,25 @@ type Handler struct{ db *gorm.DB }`,
 	}
 }
 
+func TestCheck_serviceImportsChi_violation(t *testing.T) {
+	dir := setupPackage(t, map[string]string{
+		"service.go": `package orders
+import "github.com/go-chi/chi/v5"
+var _ chi.Router`,
+		"handler.go":    `package orders`,
+		"repository.go": `package orders`,
+		"ports.go":      `package orders`,
+	})
+
+	violations, err := check.Violations(dir)
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if !containsMessage(violations, "service") || !containsMessage(violations, "chi") {
+		t.Errorf("expected chi-in-service violation, got: %v", violations)
+	}
+}
+
 func TestCheck_serviceImportsHTTP_violation(t *testing.T) {
 	dir := setupPackage(t, map[string]string{
 		"service.go": `package orders

@@ -15,6 +15,7 @@ It gives your team:
 - [Quick start](#quick-start)
 - [Clean Architecture overview](#clean-architecture-overview)
 - [Project layout](#project-layout)
+- [Technology stacks](#technology-stacks)
 - [Libraries](#libraries)
 - [CLI tools](#cli-tools)
 - [Testing](#testing)
@@ -102,8 +103,8 @@ Handler → ServicePort ← Service → RepositoryPort ← Repository
 | `errors.go` | Core | `apperrors` | HTTP codes |
 | `ports.go` | Interfaces | domain | SQL, HTTP |
 | `service.go` | Business logic | ports, domain | SQL, HTTP |
-| `repository.go` | Data | gorm, domain | HTTP |
-| `handler.go` | HTTP | ports, dto | SQL |
+| `repository.go` | Data | gorm or sqlx, domain | HTTP |
+| `handler.go` | HTTP | ports, dto (gin or chi) | SQL |
 | `dto.go` | HTTP | Go types, validator | SQL |
 | `mappers.go` | Transform | domain, dto | anything |
 
@@ -128,6 +129,30 @@ your-app/
 │   └── users/
 │       └── ...
 └── main.go
+```
+
+---
+
+## Technology stacks
+
+`portsmith new` and `portsmith check` support two stacks:
+
+| Stack | HTTP | Database | Scaffolding |
+|-------|------|----------|-------------|
+| `gin-gorm` (default) | Gin | GORM | `uint` IDs, `pkg/server`, `pkg/database` |
+| `chi-sqlx` | Chi v5 | sqlx + PostgreSQL (pgx driver) | `uuid.UUID` IDs, raw SQL in repository |
+
+**How the stack is chosen** (highest priority first):
+
+1. `--stack gin-gorm` or `--stack chi-sqlx` on the CLI
+2. `portsmith.yaml` in the project root: `stack: chi-sqlx`
+3. `go.mod`: if `github.com/go-chi/chi` appears → `chi-sqlx`; if `github.com/gin-gonic/gin` → `gin-gorm`
+4. Default: `gin-gorm`
+
+Example `portsmith.yaml`:
+
+```yaml
+stack: chi-sqlx
 ```
 
 ---
@@ -227,6 +252,28 @@ srv.Run()
 
 ---
 
+### `pkg/chiserver`
+
+Chi-based HTTP server with request ID, recovery, CORS, `/health`, `BindAndValidate`, and `RespondError` (uses `apperrors` for status codes). Use with the **chi-sqlx** stack.
+
+```go
+srv := chiserver.New(chiserver.Config{Port: 8080})
+srv.Router().Mount("/api/v1", ordersHandler.Routes())
+log.Fatal(srv.Run())
+```
+
+---
+
+### `pkg/sqlxdb`
+
+PostgreSQL connectivity via **sqlx** and the **pgx** `database/sql` driver (`sqlx.Connect("pgx", url)`), plus `WithTx` for transactions. No migrations — use your own tool.
+
+```go
+db, err := sqlxdb.Connect(sqlxdb.Config{URL: os.Getenv("DATABASE_URL")})
+```
+
+---
+
 ### `pkg/testkit`
 
 Testing helpers for all architecture layers.
@@ -263,10 +310,11 @@ portsmith gen --dry-run internal/orders # preview without writing
 
 ### `portsmith new`
 
-Scaffold a new package with all Clean Architecture files.
+Scaffold a new package with all Clean Architecture files. The stack affects generated imports and types (Gin+GORM vs Chi+sqlx).
 
 ```bash
 portsmith new internal/products
+portsmith new --stack chi-sqlx internal/widgets
 # creates: domain.go, errors.go, ports.go, service.go, repository.go, handler.go, dto.go
 ```
 
@@ -282,15 +330,16 @@ portsmith mock internal/orders
 
 ### `portsmith check`
 
-Validate architecture rules. Exits with code `1` on violations.
+Validate architecture rules. Exits with code `1` on violations. Prints the detected stack (same resolution as `portsmith new`); override with `--stack` if needed.
 
 ```bash
 portsmith check ./internal/...
+portsmith check --stack gin-gorm ./internal/...
 ```
 
 Rules checked:
-- Handler does not import `gorm.io/gorm` or `database/sql`
-- Service does not import `net/http` or `gin`
+- Handler does not import `gorm.io/gorm`, `jmoiron/sqlx`, or `database/sql`
+- Service does not import `net/http`, `gin`, or `chi`
 - Handler and Service structs use interfaces, not concrete types
 - `ports.go` exists when the three-file pattern is present
 

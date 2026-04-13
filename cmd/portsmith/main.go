@@ -71,15 +71,16 @@ Usage:
       --all     scan all packages under internal/
       --dry-run print generated content without writing files
 
-  portsmith new   <pkg-dir>
+  portsmith new   [--stack gin-gorm|chi-sqlx] <pkg-dir>
       Scaffold a new package with domain/service/repository/handler/dto files.
+      Stack defaults from portsmith.yaml or go.mod (Chi → chi-sqlx, Gin → gin-gorm).
 
   portsmith mock  [<pkg-dir>...]
       Generate mocks for all interfaces in ports.go via mockery.
 
-  portsmith check [<pkg-dir>...]
+  portsmith check [--stack gin-gorm|chi-sqlx] [<pkg-dir>...]
       Validate Clean Architecture rules. Exits with code 1 on violations.
-      Suitable for CI/CD pipelines.
+      Prints detected stack; override with --stack. Suitable for CI/CD pipelines.
 
   portsmith help
       Print this help message.
@@ -90,6 +91,7 @@ Examples:
   portsmith gen --all
   portsmith gen internal/orders
   portsmith new internal/products
+  portsmith new --stack chi-sqlx internal/widgets
   portsmith mock internal/orders internal/products
   portsmith check ./internal/...
 `)
