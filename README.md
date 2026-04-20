@@ -400,3 +400,9 @@ Both examples demonstrate all layers with detailed comments explaining every des
 - Go 1.21+
 - PostgreSQL (or SQLite for development/tests)
 - [mockery](https://github.com/vektra/mockery) for mock generation
+
+---
+
+## License
+
+[MIT](LICENSE)

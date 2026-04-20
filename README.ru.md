@@ -347,3 +347,9 @@ architecture:
 - Go 1.21+
 - PostgreSQL (или SQLite для разработки/тестов)
 - [mockery](https://github.com/vektra/mockery) для генерации моков
+
+---
+
+## Лицензия
+
+[MIT](LICENSE)
