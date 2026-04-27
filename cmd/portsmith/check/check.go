@@ -12,6 +12,7 @@ import (
 	"fmt"
 	"os"
 	"path/filepath"
+	"sort"
 	"strings"
 
 	"github.com/miilkaa/portsmith/internal/lint"
@@ -63,17 +64,65 @@ func Run(args []string) error {
 		}
 	}
 
+	sortViolations(warnViolations)
+	sortViolations(errViolations)
+
 	for _, v := range warnViolations {
-		fmt.Printf("warning: %s\n", v.String())
+		fmt.Printf("warning %-24s %s\n", "["+v.Rule+"]", v.String())
 	}
 	for _, v := range errViolations {
-		fmt.Println(v.String())
+		fmt.Printf("error   %-24s %s\n", "["+v.Rule+"]", v.String())
 	}
 
 	if len(errViolations) > 0 {
-		return fmt.Errorf("%d architecture violation(s) found", len(errViolations))
+		fmt.Println()
+		fmt.Print(violationSummary(errViolations, warnViolations))
+		return fmt.Errorf("%d error violation(s)", len(errViolations))
+	}
+	if len(warnViolations) > 0 {
+		fmt.Println()
+		fmt.Print(violationSummary(errViolations, warnViolations))
 	}
 	return nil
+}
+
+// sortViolations sorts by rule name first, then file, then line.
+func sortViolations(vs []lint.Violation) {
+	sort.Slice(vs, func(i, j int) bool {
+		if vs[i].Rule != vs[j].Rule {
+			return vs[i].Rule < vs[j].Rule
+		}
+		if vs[i].File != vs[j].File {
+			return vs[i].File < vs[j].File
+		}
+		return vs[i].Line < vs[j].Line
+	})
+}
+
+// violationSummary returns a one-line summary with per-rule counts.
+func violationSummary(errs, warns []lint.Violation) string {
+	counts := make(map[string]int)
+	for _, v := range errs {
+		counts[v.Rule]++
+	}
+	for _, v := range warns {
+		counts[v.Rule]++
+	}
+
+	// Collect and sort rule names for deterministic output.
+	rules := make([]string, 0, len(counts))
+	for r := range counts {
+		rules = append(rules, r)
+	}
+	sort.Strings(rules)
+
+	parts := make([]string, 0, len(rules))
+	for _, r := range rules {
+		parts = append(parts, fmt.Sprintf("%s: %d", r, counts[r]))
+	}
+
+	total := len(errs) + len(warns)
+	return fmt.Sprintf("%d violation(s) — %s\n", total, strings.Join(parts, ", "))
 }
 
 func parseStackArgs(args []string) (rest []string, stackFlag string) {
