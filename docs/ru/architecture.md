@@ -126,6 +126,7 @@ import "gorm.io/gorm"
 | `context-first` | У экспортируемых методов `*Service` / `*Repository` первый параметр — `context.Context` |
 | `method-count` | Лимит экспортируемых методов (`lint.max_methods`) |
 | `wiring-isolation` | Вызовы `New*Repository` / `New*Service` / `New*Handler` только в wiring-файлах (`lint.wiring.allowed_files`) |
+| `call-pattern` | Опционально: запрет/шаблоны для `recv.field.method()` в handler/service (`lint.call_patterns`; см. ниже) |
 
 ### Правила логирования (opt-in)
 
@@ -138,6 +139,27 @@ import "gorm.io/gorm"
 | `logger-no-init` | Запрет `<pkg>.New(...)` для разрешённого пакета (например `slog.New`); `slog.Default().With(...)` разрешён |
 
 Реализация: пакет [`internal/lint`](../../internal/lint), CLI — [`cmd/portsmith/check`](../../cmd/portsmith/check/check.go).
+
+### Правила шаблонов вызовов (opt-in)
+
+**Выключены по умолчанию**, пока у слоя не задан непустой список `lint.call_patterns.<слой>.not_allowed`. Проверяют именование **трёхуровневых вызовов** `receiver.field.method()`:
+
+- **Handler:** файлы `handler*.go`, кроме `handler_test.go`
+- **Service:** только **`service.go`**
+
+Это **не** файловый glob: в паттерне ровно **три сегмента** через точку. Сегмент `*` — любой один Go-идентификатор.
+
+| Паттерн | Смысл |
+|--------|--------|
+| `h.svc.*` | Ресивер только `h`, поле только `svc`, имя метода любое |
+| `*.svc.*` | Любой ресивер, поле `svc`, имя метода любое |
+| `*.service.*` | Любой ресивер, поле `service`, имя метода любое |
+
+| Rule id | Смысл |
+|---|---|
+| `call-pattern` | Паттерны из `not_allowed` дают нарушение; `allowed` — только подсказка в сообщении (`use "..." instead`), не строгий белый список (меньше ложных срабатываний на вызовы вроде `req.Header.Get`) |
+
+Учитываются только **прямые** вызовы `recv.field.Method()`; локальные алиасы (`x := h.svc; x.Method()`) не анализируются. Некорректные паттерны (не три сегмента) при сопоставлении игнорируются. По умолчанию severity — `error` при включении; переопределение: `lint.rules.call-pattern.severity`.
 
 ### Секция `lint` в `portsmith.yaml` (опционально)
 
@@ -161,6 +183,17 @@ lint:
       - "wire.go"
   logger:
     allowed: "log/slog"
+  call_patterns:
+    handler:
+      allowed:
+        - "*.svc.*"
+      not_allowed:
+        - "*.service.*"
+    service:
+      allowed:
+        - "*.repo.*"
+      not_allowed:
+        - "*.repository.*"
   rules:
     test-files:     { severity: warning }
     context-first:  { severity: warning }

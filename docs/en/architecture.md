@@ -137,6 +137,7 @@ import "gorm.io/gorm"
 | `context-first` | Exported methods on `*Service` / `*Repository` should take `context.Context` first |
 | `method-count` | Max exported methods per `*Service` / `*Handler` (optional `lint.max_methods`) |
 | `wiring-isolation` | Calls to `New*Repository` / `New*Service` / `New*Handler` only in wiring files (`lint.wiring.allowed_files`) |
+| `call-pattern` | Optional: forbid/rename patterns for `recv.field.method()` in handler/service layer files (`lint.call_patterns`; see below) |
 
 ### Logging rules (opt-in)
 
@@ -149,6 +150,27 @@ import "gorm.io/gorm"
 | `logger-no-init` | No `<pkg>.New(...)` on the allowed package (e.g. `slog.New`); `slog.Default().With(...)` is OK |
 
 Implementation lives in [`internal/lint`](../../internal/lint); the CLI is [`cmd/portsmith/check`](../../cmd/portsmith/check/check.go).
+
+### Call pattern rules (opt-in)
+
+**Off by default** until a layer has a non-empty `lint.call_patterns.<layer>.not_allowed` list. Enforces naming of **three-level method calls** `receiver.field.method()`:
+
+- **Handler:** files named `handler*.go` except `handler_test.go`
+- **Service:** `service.go` only
+
+Patterns are **not** file globs: each pattern is **exactly three dot-separated segments**. The segment `*` matches any single Go identifier.
+
+| Pattern | Meaning |
+|--------|---------|
+| `h.svc.*` | Receiver must be `h`, field must be `svc`, any method name |
+| `*.svc.*` | Any receiver, field `svc`, any method name |
+| `*.service.*` | Any receiver, field `service`, any method name |
+
+| Rule id | What |
+|---|---|
+| `call-pattern` | `not_allowed` patterns produce violations; `allowed` is only a hint in the message (`use "..." instead`), not a strict whitelist (avoids false positives on unrelated calls such as `req.Header.Get`) |
+
+Only **direct** calls `recv.field.Method()` are checked; local aliases (`x := h.svc; x.Method()`) are not analyzed. Invalid patterns (not exactly three segments) are ignored for matching. Default severity is `error` when enabled; override with `lint.rules.call-pattern.severity`.
 
 ### `portsmith.yaml` lint section (optional)
 
@@ -172,6 +194,17 @@ lint:
       - "wire.go"
   logger:
     allowed: "log/slog"
+  call_patterns:
+    handler:
+      allowed:
+        - "*.svc.*"
+      not_allowed:
+        - "*.service.*"
+    service:
+      allowed:
+        - "*.repo.*"
+      not_allowed:
+        - "*.repository.*"
   rules:
     test-files:     { severity: warning }
     context-first:  { severity: warning }
