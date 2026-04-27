@@ -282,17 +282,17 @@ portsmith mock internal/orders
 
 ### `portsmith check`
 
-Проверяет правила архитектуры. Завершается с кодом `1` при нарушениях.
+Проверяет правила архитектуры. Код выхода `1` только при нарушениях уровня **error**; **warning** печатаются, но не роняют команду.
 
 ```bash
 portsmith check ./internal/...
 ```
 
-Проверяемые правила:
-- Handler не импортирует `gorm.io/gorm` или `database/sql`
-- Service не импортирует `net/http` или `gin`
-- Поля структур Handler и Service — интерфейсы, не конкретные типы
-- `ports.go` существует, если присутствует паттерн трёх файлов
+Базовые правила (всегда): наличие `ports.go` при тройке handler/service/repository; запрет драйверов БД в handler-файлах; запрет HTTP/роутеров в `service.go`; поля через порты, не `*Service`/`*Repository`; направление зависимостей между слоями; экспортируемые типы только в «своих» файлах слоя; конструкторы на интерфейсах; запрет `panic` в service/repository; опционально `context.Context` первым параметром у экспортируемых методов сервиса/репозитория.
+
+Дополнительно через `portsmith.yaml` → `lint`: лимиты строк и методов, allowlist для `internal/...`, изоляция wiring для `New*Repository` / `New*Service` / `New*Handler`.
+
+Настройка серьёзности и подавление в коде — см. [docs/ru/architecture.md](docs/ru/architecture.md#проверка-архитектуры).
 
 ---
 

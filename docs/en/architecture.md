@@ -110,4 +110,58 @@ Run `portsmith check` to verify all rules are followed (it prints the resolved s
 portsmith check ./internal/...
 ```
 
-See [portsmith check](../../cmd/portsmith/check/check.go) for the complete list of rules.
+**Severity:** all rules default to `error` (failing exit code). Override per rule in `portsmith.yaml` under `lint.rules` (`severity: error | warning | off`).
+
+**Inline suppress** (next line or same line after code):
+
+```go
+//nolint:portsmith:handler-no-db
+import "gorm.io/gorm"
+```
+
+### Rules (R1–R14)
+
+| Rule id | What |
+|---|---|
+| `ports-required` | `ports.go` required when `handler.go`, `service.go`, and `repository.go` exist |
+| `handler-no-db` | Handler files must not import DB drivers (`database/sql`, `gorm`, `sqlx`) |
+| `service-no-http` | `service.go` must not import HTTP routers or `net/http` |
+| `no-concrete-fields` | `Handler` / `Service` struct fields must not use concrete `*Service`, `*Repository`, `*Handler` |
+| `layer-dependency` | `Handler` must not depend on repository-layer types; `Service` must not depend on handler-layer types (file-scoped type map + suffix fallback) |
+| `type-placement` | Exported structs in `repository*.go` / `service.go` must live in the right layer (naming) |
+| `file-size` | Max lines per file (optional `lint.max_lines` in `portsmith.yaml`) |
+| `cross-imports` | Allowlisted `internal/...` imports only (optional `lint.allowed_cross_imports`) |
+| `constructor-injection` | Constructors must take interface ports, not concrete layer pointers |
+| `test-files` | `service_test.go` / `handler_test.go` present |
+| `no-panic` | No `panic()` in `service*.go` / `repository*.go` |
+| `context-first` | Exported methods on `*Service` / `*Repository` should take `context.Context` first |
+| `method-count` | Max exported methods per `*Service` / `*Handler` (optional `lint.max_methods`) |
+| `wiring-isolation` | Calls to `New*Repository` / `New*Service` / `New*Handler` only in wiring files (`lint.wiring.allowed_files`) |
+
+Implementation lives in [`internal/lint`](../../internal/lint); the CLI is [`cmd/portsmith/check`](../../cmd/portsmith/check/check.go).
+
+### `portsmith.yaml` lint section (optional)
+
+```yaml
+stack: chi-sqlx
+lint:
+  max_lines:
+    - pattern: "repository*.go"
+      limit: 800
+    - file: "internal/orders/repository.go"
+      limit: 1200
+  max_methods:
+    - pattern: "service.go"
+      limit: 25
+  allowed_cross_imports:
+    "repository*.go":
+      - "internal/shared"
+  wiring:
+    allowed_files:
+      - "module.go"
+      - "wire.go"
+  rules:
+    test-files:     { severity: warning }
+    context-first:  { severity: warning }
+    method-count:   { severity: warning }
+```

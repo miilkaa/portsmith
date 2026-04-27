@@ -1,42 +1,25 @@
-// Package check implements the portsmith check command — an architecture linter
-// that validates Clean Architecture rules across Go packages.
+// Package check implements the portsmith check command — CLI entry for the architecture linter.
 //
 // Usage in CI/CD:
 //
 //	portsmith check ./internal/...
 //
-// Exit code 1 is returned when violations are found, 0 when clean.
-// Output format is compatible with Go tools: file:line: message
+// Exit code 1 is returned when error-severity violations are found.
+// Warning-severity violations are printed but do not fail the command.
 package check
 
 import (
 	"fmt"
-	"go/ast"
-	"go/parser"
-	"go/token"
 	"os"
 	"path/filepath"
 	"strings"
 
+	"github.com/miilkaa/portsmith/internal/lint"
+	"github.com/miilkaa/portsmith/internal/lintconfig"
 	"github.com/miilkaa/portsmith/internal/stack"
 )
 
-// Violation describes a single architectural rule violation.
-type Violation struct {
-	File    string
-	Line    int
-	Message string
-}
-
-func (v Violation) String() string {
-	if v.Line > 0 {
-		return fmt.Sprintf("%s:%d: %s", v.File, v.Line, v.Message)
-	}
-	return fmt.Sprintf("%s: %s", v.File, v.Message)
-}
-
 // Run executes the check command for the given arguments.
-// Arguments can be package directories or Go-style patterns (./internal/...).
 func Run(args []string) error {
 	rest, stackFlag := parseStackArgs(args)
 	if len(rest) == 0 {
@@ -54,21 +37,41 @@ func Run(args []string) error {
 		return err
 	}
 
-	var allViolations []Violation
+	var errViolations, warnViolations []lint.Violation
 	for _, dir := range dirs {
-		v, err := Violations(dir)
+		root, err := stack.FindProjectRoot(dir)
 		if err != nil {
-			return fmt.Errorf("%s: %w", dir, err)
+			root = dir
 		}
-		allViolations = append(allViolations, v...)
+		cfg, lerr := lintconfig.Load(root)
+		if lerr != nil {
+			return fmt.Errorf("%s: %w", root, lerr)
+		}
+		vs, verr := lint.Violations(dir, cfg, root)
+		if verr != nil {
+			return fmt.Errorf("%s: %w", dir, verr)
+		}
+		for _, v := range vs {
+			switch cfg.Lint.RuleSeverity(v.Rule) {
+			case lintconfig.SeverityOff:
+				continue
+			case lintconfig.SeverityWarning:
+				warnViolations = append(warnViolations, v)
+			default:
+				errViolations = append(errViolations, v)
+			}
+		}
 	}
 
-	for _, v := range allViolations {
-		fmt.Println(v)
+	for _, v := range warnViolations {
+		fmt.Printf("warning: %s\n", v.String())
+	}
+	for _, v := range errViolations {
+		fmt.Println(v.String())
 	}
 
-	if len(allViolations) > 0 {
-		return fmt.Errorf("%d architecture violation(s) found", len(allViolations))
+	if len(errViolations) > 0 {
+		return fmt.Errorf("%d architecture violation(s) found", len(errViolations))
 	}
 	return nil
 }
@@ -89,145 +92,12 @@ func parseStackArgs(args []string) (rest []string, stackFlag string) {
 	return rest, stackFlag
 }
 
-// Violations checks a single package directory and returns all violations found.
-// Returns an empty slice for clean packages.
-func Violations(dir string) ([]Violation, error) {
-	var violations []Violation
-
-	// Rule 1: ports.go must exist when handler.go + service.go + repository.go are present.
-	if hasFile(dir, "handler.go") && hasFile(dir, "service.go") && hasFile(dir, "repository.go") {
-		if !hasFile(dir, "ports.go") {
-			violations = append(violations, Violation{
-				File:    filepath.Join(dir, "ports.go"),
-				Message: "ports.go is missing — run: portsmith gen " + dir,
-			})
-		}
-	}
-
-	entries, err := os.ReadDir(dir)
-	if err != nil {
-		return nil, err
-	}
-
-	fset := token.NewFileSet()
-	for _, e := range entries {
-		if e.IsDir() || !strings.HasSuffix(e.Name(), ".go") || strings.HasSuffix(e.Name(), "_test.go") {
-			continue
-		}
-
-		path := filepath.Join(dir, e.Name())
-		f, err := parser.ParseFile(fset, path, nil, 0)
-		if err != nil {
-			continue
-		}
-
-		v := checkFile(fset, f, path, e.Name())
-		violations = append(violations, v...)
-	}
-
-	return violations, nil
-}
-
-func checkFile(fset *token.FileSet, f *ast.File, path, name string) []Violation {
-	var violations []Violation
-
-	isHandler := strings.HasPrefix(name, "handler") && name != "handler_test.go"
-	isService := name == "service.go"
-
-	// Rule 2: handler files must not import DB drivers directly (stack-specific surface).
-	if isHandler {
-		for _, imp := range f.Imports {
-			impPath := strings.Trim(imp.Path.Value, `"`)
-			if forbiddenHandlerDBImport(impPath) {
-				pos := fset.Position(imp.Pos())
-				violations = append(violations, Violation{
-					File:    path,
-					Line:    pos.Line,
-					Message: fmt.Sprintf("handler imports %q directly — database access belongs in repository", impPath),
-				})
-			}
-		}
-	}
-
-	// Rule 3: service files must not import HTTP or router frameworks.
-	if isService {
-		for _, imp := range f.Imports {
-			impPath := strings.Trim(imp.Path.Value, `"`)
-			if impPath == "net/http" ||
-				strings.Contains(impPath, "gin-gonic/gin") ||
-				strings.Contains(impPath, "go-chi/chi") {
-				pos := fset.Position(imp.Pos())
-				violations = append(violations, Violation{
-					File:    path,
-					Line:    pos.Line,
-					Message: fmt.Sprintf("service imports %q — HTTP concerns belong in handler", impPath),
-				})
-			}
-		}
-	}
-
-	// Rule 4: Handler and Service structs must use interfaces for service/repo fields, not concrete types.
-	if isHandler || isService {
-		for _, decl := range f.Decls {
-			gd, ok := decl.(*ast.GenDecl)
-			if !ok {
-				continue
-			}
-			for _, spec := range gd.Specs {
-				ts, ok := spec.(*ast.TypeSpec)
-				if !ok {
-					continue
-				}
-				st, ok := ts.Type.(*ast.StructType)
-				if !ok {
-					continue
-				}
-				typeName := ts.Name.Name
-				if typeName != "Handler" && typeName != "Service" {
-					continue
-				}
-				for _, field := range st.Fields.List {
-					if star, ok := field.Type.(*ast.StarExpr); ok {
-						if ident, ok := star.X.(*ast.Ident); ok {
-							// Concrete pointer to a struct — check if it looks like a layer type.
-							if ident.Name == "Service" || ident.Name == "Repository" || ident.Name == "Handler" {
-								pos := fset.Position(field.Pos())
-								violations = append(violations, Violation{
-									File:    path,
-									Line:    pos.Line,
-									Message: fmt.Sprintf("concrete type *%s in struct %s — use an interface (port) instead", ident.Name, typeName),
-								})
-							}
-						}
-					}
-				}
-			}
-		}
-	}
-
-	return violations
-}
-
-func forbiddenHandlerDBImport(impPath string) bool {
-	if impPath == "database/sql" {
-		return true
-	}
-	if strings.Contains(impPath, "gorm.io/gorm") {
-		return true
-	}
-	if strings.Contains(impPath, "jmoiron/sqlx") {
-		return true
-	}
-	return false
-}
-
 // resolveDirs expands Go-style patterns like ./internal/... into directory paths.
 func resolveDirs(patterns []string) ([]string, error) {
 	seen := make(map[string]bool)
 	var result []string
 
 	for _, pattern := range patterns {
-		// Handle ./... style patterns.
 		if strings.HasSuffix(pattern, "/...") {
 			root := strings.TrimSuffix(pattern, "/...")
 			root = strings.TrimPrefix(root, "./")
@@ -250,7 +120,6 @@ func resolveDirs(patterns []string) ([]string, error) {
 			continue
 		}
 
-		// Handle ./... at root.
 		if pattern == "./..." {
 			err := filepath.WalkDir(".", func(path string, d os.DirEntry, err error) error {
 				if err != nil || !d.IsDir() {
@@ -277,9 +146,4 @@ func resolveDirs(patterns []string) ([]string, error) {
 		}
 	}
 	return result, nil
-}
-
-func hasFile(dir, name string) bool {
-	_, err := os.Stat(filepath.Join(dir, name))
-	return err == nil
 }

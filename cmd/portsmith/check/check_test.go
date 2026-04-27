@@ -1,21 +1,25 @@
 package check_test
 
-// check_test.go — контрактные тесты для cmd/portsmith/check.
-//
-// Контракт линтера:
-//  1. Violations обнаруживает импорт gorm в handler.go.
-//  2. Violations обнаруживает импорт net/http в service.go.
-//  3. Violations обнаруживает конкретный тип в поле struct Handler/Service.
-//  4. Violations возвращает пустой срез для корректного пакета.
-//  5. ViolationError содержит файл, строку и описание.
+// check_test.go — integration tests for portsmith check (lint.Violations).
 
 import (
 	"os"
 	"path/filepath"
 	"testing"
 
-	"github.com/miilkaa/portsmith/cmd/portsmith/check"
+	"github.com/miilkaa/portsmith/internal/lint"
+	"github.com/miilkaa/portsmith/internal/lintconfig"
 )
+
+func testLintConfig() lintconfig.Config {
+	return lintconfig.Config{
+		Lint: lintconfig.LintConfig{
+			Rules: map[string]lintconfig.RuleConfig{
+				"test-files": {Severity: "off"},
+			},
+		},
+	}
+}
 
 func setupPackage(t *testing.T, files map[string]string) string {
 	t.Helper()
@@ -39,7 +43,7 @@ type Handler struct{ db *gorm.DB }`,
 		"ports.go":      `package orders`,
 	})
 
-	violations, err := check.Violations(dir)
+	violations, err := lint.Violations(dir, testLintConfig(), dir)
 	if err != nil {
 		t.Fatalf("unexpected error: %v", err)
 	}
@@ -58,7 +62,7 @@ var _ chi.Router`,
 		"ports.go":      `package orders`,
 	})
 
-	violations, err := check.Violations(dir)
+	violations, err := lint.Violations(dir, testLintConfig(), dir)
 	if err != nil {
 		t.Fatalf("unexpected error: %v", err)
 	}
@@ -77,7 +81,7 @@ func (s *Service) Handle(w http.ResponseWriter) {}`,
 		"ports.go":      `package orders`,
 	})
 
-	violations, err := check.Violations(dir)
+	violations, err := lint.Violations(dir, testLintConfig(), dir)
 	if err != nil {
 		t.Fatalf("unexpected error: %v", err)
 	}
@@ -97,7 +101,7 @@ type Handler struct {
 		"ports.go":      `package orders`,
 	})
 
-	violations, err := check.Violations(dir)
+	violations, err := lint.Violations(dir, testLintConfig(), dir)
 	if err != nil {
 		t.Fatalf("unexpected error: %v", err)
 	}
@@ -111,10 +115,9 @@ func TestCheck_missingPortsGo_violation(t *testing.T) {
 		"handler.go":    `package orders`,
 		"service.go":    `package orders`,
 		"repository.go": `package orders`,
-		// No ports.go
 	})
 
-	violations, err := check.Violations(dir)
+	violations, err := lint.Violations(dir, testLintConfig(), dir)
 	if err != nil {
 		t.Fatalf("unexpected error: %v", err)
 	}
@@ -142,7 +145,7 @@ type OrdersRepository interface{ FindByID(ctx context.Context, id uint) error }
 type OrdersService interface{ Do(ctx context.Context) }`,
 	})
 
-	violations, err := check.Violations(dir)
+	violations, err := lint.Violations(dir, testLintConfig(), dir)
 	if err != nil {
 		t.Fatalf("unexpected error: %v", err)
 	}
@@ -151,7 +154,7 @@ type OrdersService interface{ Do(ctx context.Context) }`,
 	}
 }
 
-func containsMessage(violations []check.Violation, substr string) bool {
+func containsMessage(violations []lint.Violation, substr string) bool {
 	for _, v := range violations {
 		if contains(v.Message, substr) {
 			return true
