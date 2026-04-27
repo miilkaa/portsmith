@@ -60,6 +60,7 @@ const (
 // DefaultSeverity is used when lint.rules does not override a rule.
 var DefaultSeverity = map[string]Severity{
 	"ports-required":        SeverityError,
+	"ports-complete":        SeverityError,
 	"handler-no-db":         SeverityError,
 	"service-no-http":       SeverityError,
 	"no-concrete-fields":    SeverityError,

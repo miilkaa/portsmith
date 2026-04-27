@@ -16,6 +16,7 @@ import (
 func Violations(dir string, cfg lintconfig.Config, projectRoot string) ([]Violation, error) {
 	var vs []Violation
 	vs = append(vs, checkPortsPresence(dir)...)
+	vs = append(vs, checkPortsComplete(dir)...)
 	vs = append(vs, checkTestFilePresence(dir)...)
 
 	entries, err := os.ReadDir(dir)
