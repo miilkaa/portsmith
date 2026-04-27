@@ -108,7 +108,7 @@ portsmith check ./internal/...
 import "gorm.io/gorm"
 ```
 
-### Правила
+### Основные правила
 
 | Rule id | Смысл |
 |---|---|
@@ -126,6 +126,16 @@ import "gorm.io/gorm"
 | `context-first` | У экспортируемых методов `*Service` / `*Repository` первый параметр — `context.Context` |
 | `method-count` | Лимит экспортируемых методов (`lint.max_methods`) |
 | `wiring-isolation` | Вызовы `New*Repository` / `New*Service` / `New*Handler` только в wiring-файлах (`lint.wiring.allowed_files`) |
+
+### Правила логирования (opt-in)
+
+**По умолчанию выключены.** Укажите `lint.logger.allowed` — канонический import-путь логгера (например `log/slog`). Включаются три правила с `error`, пока не переопределите в `lint.rules`. Действуют на **все** не-тестовые `.go` файлы пакета.
+
+| Rule id | Смысл |
+|---|---|
+| `logger-no-other` | Запрет известных пакетов логирования (`log`, `log/slog`, `zap`, `logrus`, `zerolog`), кроме указанного в `allowed` |
+| `logger-no-fmt-print` | Запрет `fmt.Print*` / `fmt.Fprint*` вместо логгера |
+| `logger-no-init` | Запрет `<pkg>.New(...)` для разрешённого пакета (например `slog.New`); `slog.Default().With(...)` разрешён |
 
 Реализация: пакет [`internal/lint`](../../internal/lint), CLI — [`cmd/portsmith/check`](../../cmd/portsmith/check/check.go).
 
@@ -149,6 +159,8 @@ lint:
     allowed_files:
       - "module.go"
       - "wire.go"
+  logger:
+    allowed: "log/slog"
   rules:
     test-files:     { severity: warning }
     context-first:  { severity: warning }

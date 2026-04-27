@@ -119,7 +119,7 @@ portsmith check ./internal/...
 import "gorm.io/gorm"
 ```
 
-### Rules (R1–R14)
+### Core rules (R1–R14)
 
 | Rule id | What |
 |---|---|
@@ -137,6 +137,16 @@ import "gorm.io/gorm"
 | `context-first` | Exported methods on `*Service` / `*Repository` should take `context.Context` first |
 | `method-count` | Max exported methods per `*Service` / `*Handler` (optional `lint.max_methods`) |
 | `wiring-isolation` | Calls to `New*Repository` / `New*Service` / `New*Handler` only in wiring files (`lint.wiring.allowed_files`) |
+
+### Logging rules (opt-in)
+
+**Off by default.** Set `lint.logger.allowed` to your canonical logger import path (e.g. `log/slog`). That enables all three rules at `error` unless you override them under `lint.rules`. Applies to **every** non-test `.go` file in the package.
+
+| Rule id | What |
+|---|---|
+| `logger-no-other` | No imports of other known logging packages (`log`, `log/slog`, `zap`, `logrus`, `zerolog`) except `allowed` |
+| `logger-no-fmt-print` | No `fmt.Print*` / `fmt.Fprint*` (use structured logging) |
+| `logger-no-init` | No `<pkg>.New(...)` on the allowed package (e.g. `slog.New`); `slog.Default().With(...)` is OK |
 
 Implementation lives in [`internal/lint`](../../internal/lint); the CLI is [`cmd/portsmith/check`](../../cmd/portsmith/check/check.go).
 
@@ -160,6 +170,8 @@ lint:
     allowed_files:
       - "module.go"
       - "wire.go"
+  logger:
+    allowed: "log/slog"
   rules:
     test-files:     { severity: warning }
     context-first:  { severity: warning }

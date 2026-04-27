@@ -22,7 +22,14 @@ type LintConfig struct {
 	MaxMethods          []MaxMethodsRule      `yaml:"max_methods"`
 	AllowedCrossImports map[string][]string   `yaml:"allowed_cross_imports"`
 	Wiring              WiringConfig          `yaml:"wiring"`
+	Logger              LoggerConfig          `yaml:"logger"`
 	Rules               map[string]RuleConfig `yaml:"rules"`
+}
+
+// LoggerConfig enables logging-related lint rules when Allowed is non-empty.
+// Allowed is the canonical import path (e.g. "log/slog", "go.uber.org/zap").
+type LoggerConfig struct {
+	Allowed string `yaml:"allowed"`
 }
 
 // FileSizeRule limits lines per file pattern or exact repo-relative path.
@@ -74,6 +81,9 @@ var DefaultSeverity = map[string]Severity{
 	"context-first":         SeverityError,
 	"method-count":          SeverityError,
 	"wiring-isolation":      SeverityError,
+	"logger-no-other":       SeverityOff,
+	"logger-no-fmt-print":   SeverityOff,
+	"logger-no-init":        SeverityOff,
 }
 
 // RuleSeverity returns the effective severity for a rule id.
@@ -81,10 +91,25 @@ func (lc LintConfig) RuleSeverity(rule string) Severity {
 	if rc, ok := lc.Rules[rule]; ok {
 		return parseSeverity(rc.Severity)
 	}
+	if isLoggerRule(rule) {
+		if strings.TrimSpace(lc.Logger.Allowed) == "" {
+			return SeverityOff
+		}
+		return SeverityError
+	}
 	if d, ok := DefaultSeverity[rule]; ok {
 		return d
 	}
 	return SeverityError
+}
+
+func isLoggerRule(rule string) bool {
+	switch rule {
+	case "logger-no-other", "logger-no-fmt-print", "logger-no-init":
+		return true
+	default:
+		return false
+	}
 }
 
 func parseSeverity(s string) Severity {

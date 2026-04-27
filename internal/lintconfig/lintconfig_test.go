@@ -41,3 +41,31 @@ lint:
 		t.Fatalf("test-files severity")
 	}
 }
+
+func TestRuleSeverity_loggerRules_optIn(t *testing.T) {
+	cfg := lintconfig.Config{}
+	if cfg.Lint.RuleSeverity("logger-no-other") != lintconfig.SeverityOff {
+		t.Fatalf("logger-no-other without config should be off")
+	}
+	cfg.Lint.Logger.Allowed = "log/slog"
+	if cfg.Lint.RuleSeverity("logger-no-fmt-print") != lintconfig.SeverityError {
+		t.Fatalf("logger rules should be error when logger.allowed is set")
+	}
+}
+
+func TestRuleSeverity_loggerRules_explicitOverride(t *testing.T) {
+	cfg := lintconfig.Config{
+		Lint: lintconfig.LintConfig{
+			Logger: lintconfig.LoggerConfig{Allowed: "log/slog"},
+			Rules: map[string]lintconfig.RuleConfig{
+				"logger-no-init": {Severity: "off"},
+			},
+		},
+	}
+	if cfg.Lint.RuleSeverity("logger-no-init") != lintconfig.SeverityOff {
+		t.Fatalf("explicit rules entry should win")
+	}
+	if cfg.Lint.RuleSeverity("logger-no-other") != lintconfig.SeverityError {
+		t.Fatalf("other logger rules should stay error")
+	}
+}

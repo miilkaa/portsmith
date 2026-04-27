@@ -3,6 +3,7 @@ package lint_test
 import (
 	"os"
 	"path/filepath"
+	"strings"
 	"testing"
 
 	"github.com/miilkaa/portsmith/internal/lint"
@@ -78,6 +79,80 @@ func TestViolations_rule7_maxLines(t *testing.T) {
 	}
 }
 
+func TestViolations_loggerRules_disabledWithoutConfig(t *testing.T) {
+	dir := t.TempDir()
+	write(t, dir, "x.go", `package p
+import "log"
+func f() { log.Print("x") }
+`)
+	cfg := lintconfig.Config{}
+	vs, err := lint.Violations(dir, cfg, dir)
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, v := range vs {
+		if stringsHasPrefix(v.Rule, "logger-") {
+			t.Fatalf("unexpected logger violation without lint.logger.allowed: %v", v)
+		}
+	}
+}
+
+func TestViolations_loggerRules_importAndFmt(t *testing.T) {
+	dir := t.TempDir()
+	write(t, dir, "x.go", `package p
+import "log"
+func f() { fmt.Printf("%s", "x") }
+`)
+	cfg := lintconfig.Config{
+		Lint: lintconfig.LintConfig{
+			Logger: lintconfig.LoggerConfig{Allowed: "log/slog"},
+		},
+	}
+	vs, err := lint.Violations(dir, cfg, dir)
+	if err != nil {
+		t.Fatal(err)
+	}
+	var hasOther, hasFmt bool
+	for _, v := range vs {
+		if v.Rule == "logger-no-other" {
+			hasOther = true
+		}
+		if v.Rule == "logger-no-fmt-print" {
+			hasFmt = true
+		}
+	}
+	if !hasOther || !hasFmt {
+		t.Fatalf("expected logger-no-other and logger-no-fmt-print, got %#v", vs)
+	}
+}
+
+func TestViolations_loggerRules_slogNew(t *testing.T) {
+	dir := t.TempDir()
+	write(t, dir, "x.go", `package p
+import "log/slog"
+func f() { _ = slog.New(nil) }
+`)
+	cfg := lintconfig.Config{
+		Lint: lintconfig.LintConfig{
+			Logger: lintconfig.LoggerConfig{Allowed: "log/slog"},
+		},
+	}
+	vs, err := lint.Violations(dir, cfg, dir)
+	if err != nil {
+		t.Fatal(err)
+	}
+	found := false
+	for _, v := range vs {
+		if v.Rule == "logger-no-init" {
+			found = true
+			break
+		}
+	}
+	if !found {
+		t.Fatalf("expected logger-no-init, got %#v", vs)
+	}
+}
+
 func TestViolations_nolintSuppressesRule(t *testing.T) {
 	dir := t.TempDir()
 	write(t, dir, "handler.go", `package orders
@@ -117,6 +192,10 @@ func write(t *testing.T, dir, name, content string) {
 
 func contains(s, sub string) bool {
 	return len(s) >= len(sub) && (index(s, sub) >= 0)
+}
+
+func stringsHasPrefix(s, prefix string) bool {
+	return len(s) >= len(prefix) && strings.HasPrefix(s, prefix)
 }
 
 func index(s, sub string) int {
