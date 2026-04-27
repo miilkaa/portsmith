@@ -18,18 +18,47 @@ type Config struct {
 
 // LintConfig holds optional lint settings.
 type LintConfig struct {
-	MaxLines            []FileSizeRule        `yaml:"max_lines"`
-	MaxMethods          []MaxMethodsRule      `yaml:"max_methods"`
-	AllowedCrossImports map[string][]string   `yaml:"allowed_cross_imports"`
-	Wiring              WiringConfig          `yaml:"wiring"`
-	Logger              LoggerConfig          `yaml:"logger"`
-	Rules               map[string]RuleConfig `yaml:"rules"`
+	MaxLines            []FileSizeRule          `yaml:"max_lines"`
+	MaxMethods          []MaxMethodsRule        `yaml:"max_methods"`
+	AllowedCrossImports map[string][]string     `yaml:"allowed_cross_imports"`
+	Wiring              WiringConfig            `yaml:"wiring"`
+	Logger              LoggerConfig            `yaml:"logger"`
+	CallPatterns        CallPatternsConfig      `yaml:"call_patterns"`
+	Rules               map[string]RuleConfig   `yaml:"rules"`
 }
 
 // LoggerConfig enables logging-related lint rules when Allowed is non-empty.
 // Allowed is the canonical import path (e.g. "log/slog", "go.uber.org/zap").
 type LoggerConfig struct {
 	Allowed string `yaml:"allowed"`
+}
+
+// CallPatternsConfig enables call-pattern lint rules when Handler or Service has a not_allowed pattern.
+// Patterns are three segments separated by dots (recv.field.method); use * for any identifier.
+type CallPatternsConfig struct {
+	Handler LayerCallConfig `yaml:"handler"`
+	Service LayerCallConfig `yaml:"service"`
+}
+
+// LayerCallConfig lists allowed (for error hints) and not_allowed call patterns for one layer.
+type LayerCallConfig struct {
+	Allowed    []string `yaml:"allowed"`
+	NotAllowed []string `yaml:"not_allowed"`
+}
+
+// HasNotAllowedPattern reports whether not_allowed contains a non-empty pattern string.
+func (l LayerCallConfig) HasNotAllowedPattern() bool {
+	for _, s := range l.NotAllowed {
+		if strings.TrimSpace(s) != "" {
+			return true
+		}
+	}
+	return false
+}
+
+// Enabled reports whether call-pattern linting is active (any layer lists not_allowed patterns).
+func (c CallPatternsConfig) Enabled() bool {
+	return c.Handler.HasNotAllowedPattern() || c.Service.HasNotAllowedPattern()
 }
 
 // FileSizeRule limits lines per file pattern or exact repo-relative path.
@@ -84,6 +113,7 @@ var DefaultSeverity = map[string]Severity{
 	"logger-no-other":       SeverityOff,
 	"logger-no-fmt-print":   SeverityOff,
 	"logger-no-init":        SeverityOff,
+	"call-pattern":          SeverityError,
 }
 
 // RuleSeverity returns the effective severity for a rule id.
@@ -94,6 +124,15 @@ func (lc LintConfig) RuleSeverity(rule string) Severity {
 	if isLoggerRule(rule) {
 		if strings.TrimSpace(lc.Logger.Allowed) == "" {
 			return SeverityOff
+		}
+		return SeverityError
+	}
+	if rule == "call-pattern" {
+		if !lc.CallPatterns.Enabled() {
+			return SeverityOff
+		}
+		if d, ok := DefaultSeverity[rule]; ok {
+			return d
 		}
 		return SeverityError
 	}

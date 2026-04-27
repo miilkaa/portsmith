@@ -69,3 +69,68 @@ func TestRuleSeverity_loggerRules_explicitOverride(t *testing.T) {
 		t.Fatalf("other logger rules should stay error")
 	}
 }
+
+func TestRuleSeverity_callPattern_optIn(t *testing.T) {
+	cfg := lintconfig.Config{}
+	if cfg.Lint.RuleSeverity("call-pattern") != lintconfig.SeverityOff {
+		t.Fatalf("call-pattern without call_patterns should be off")
+	}
+	cfg.Lint.CallPatterns.Handler.Allowed = []string{"*.svc.*"}
+	if cfg.Lint.RuleSeverity("call-pattern") != lintconfig.SeverityOff {
+		t.Fatalf("call-pattern should stay off when only allowed is set")
+	}
+	cfg.Lint.CallPatterns.Handler.NotAllowed = []string{"*.service.*"}
+	if cfg.Lint.RuleSeverity("call-pattern") != lintconfig.SeverityError {
+		t.Fatalf("call-pattern should be error when not_allowed is set")
+	}
+}
+
+func TestRuleSeverity_callPattern_explicitOverride(t *testing.T) {
+	cfg := lintconfig.Config{
+		Lint: lintconfig.LintConfig{
+			CallPatterns: lintconfig.CallPatternsConfig{
+				Handler: lintconfig.LayerCallConfig{
+					NotAllowed: []string{"*.service.*"},
+				},
+			},
+			Rules: map[string]lintconfig.RuleConfig{
+				"call-pattern": {Severity: "off"},
+			},
+		},
+	}
+	if cfg.Lint.RuleSeverity("call-pattern") != lintconfig.SeverityOff {
+		t.Fatalf("explicit rules entry should win over call_patterns")
+	}
+}
+
+func TestLoad_callPatterns(t *testing.T) {
+	dir := t.TempDir()
+	content := `stack: chi-sqlx
+lint:
+  call_patterns:
+    handler:
+      allowed:
+        - "*.svc.*"
+      not_allowed:
+        - "*.service.*"
+    service:
+      not_allowed:
+        - "*.repository.*"
+`
+	if err := os.WriteFile(filepath.Join(dir, "portsmith.yaml"), []byte(content), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	cfg, err := lintconfig.Load(dir)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(cfg.Lint.CallPatterns.Handler.Allowed) != 1 || cfg.Lint.CallPatterns.Handler.Allowed[0] != "*.svc.*" {
+		t.Fatalf("handler allowed: %#v", cfg.Lint.CallPatterns.Handler.Allowed)
+	}
+	if len(cfg.Lint.CallPatterns.Handler.NotAllowed) != 1 || cfg.Lint.CallPatterns.Handler.NotAllowed[0] != "*.service.*" {
+		t.Fatalf("handler not_allowed: %#v", cfg.Lint.CallPatterns.Handler.NotAllowed)
+	}
+	if len(cfg.Lint.CallPatterns.Service.NotAllowed) != 1 {
+		t.Fatalf("service not_allowed: %#v", cfg.Lint.CallPatterns.Service.NotAllowed)
+	}
+}

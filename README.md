@@ -18,6 +18,7 @@ It gives your team:
 - [Technology stacks](#technology-stacks)
 - [Libraries](#libraries)
 - [CLI tools](#cli-tools)
+- [Linting](docs/en/linting.md)
 - [Testing](#testing)
 - [CI/CD integration](#cicd-integration)
 - [Example package](#example-package)

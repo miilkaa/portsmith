@@ -81,5 +81,6 @@ func checkFile(ctx CheckContext) []Violation {
 	vs = append(vs, checkMethodCount(ctx)...)
 	vs = append(vs, checkWiringViolations(ctx)...)
 	vs = append(vs, checkLoggerRules(ctx)...)
+	vs = append(vs, checkCallPatterns(ctx)...)
 	return vs
 }

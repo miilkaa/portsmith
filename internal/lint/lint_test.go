@@ -153,6 +153,161 @@ func f() { _ = slog.New(nil) }
 	}
 }
 
+func TestViolations_callPattern_handlerNotAllowed(t *testing.T) {
+	dir := t.TempDir()
+	write(t, dir, "ports.go", `package orders
+type OrdersRepository interface { Get() }
+type OrdersService interface { Do() }
+`)
+	write(t, dir, "repository.go", `package orders
+type Repository struct{}
+`)
+	write(t, dir, "service.go", `package orders
+type Service struct{}
+`)
+	write(t, dir, "handler.go", `package orders
+type Handler struct{}
+func (h *Handler) Create() {
+	h.service.Do()
+}
+`)
+	write(t, dir, "handler_test.go", `package orders
+import "testing"
+func TestX(t *testing.T) {}
+`)
+	write(t, dir, "service_test.go", `package orders
+import "testing"
+func TestY(t *testing.T) {}
+`)
+
+	cfg := lintconfig.Config{
+		Lint: lintconfig.LintConfig{
+			Rules: map[string]lintconfig.RuleConfig{
+				"test-files": {Severity: "off"},
+			},
+			CallPatterns: lintconfig.CallPatternsConfig{
+				Handler: lintconfig.LayerCallConfig{
+					Allowed:    []string{"*.svc.*"},
+					NotAllowed: []string{"*.service.*"},
+				},
+			},
+		},
+	}
+	vs, err := lint.Violations(dir, cfg, dir)
+	if err != nil {
+		t.Fatal(err)
+	}
+	found := false
+	for _, v := range vs {
+		if v.Rule == "call-pattern" && contains(v.Message, "h.service.Do") && contains(v.Message, "*.svc.*") {
+			found = true
+			break
+		}
+	}
+	if !found {
+		t.Fatalf("expected call-pattern violation, got %#v", vs)
+	}
+}
+
+func TestViolations_callPattern_handlerAllowedNoViolation(t *testing.T) {
+	dir := t.TempDir()
+	write(t, dir, "ports.go", `package orders
+type OrdersRepository interface { Get() }
+type OrdersService interface { Do() }
+`)
+	write(t, dir, "repository.go", `package orders
+type Repository struct{}
+`)
+	write(t, dir, "service.go", `package orders
+type Service struct{}
+`)
+	write(t, dir, "handler.go", `package orders
+type Handler struct{}
+func (h *Handler) Create() {
+	h.svc.Do()
+}
+`)
+	write(t, dir, "handler_test.go", `package orders
+import "testing"
+func TestX(t *testing.T) {}
+`)
+	write(t, dir, "service_test.go", `package orders
+import "testing"
+func TestY(t *testing.T) {}
+`)
+
+	cfg := lintconfig.Config{
+		Lint: lintconfig.LintConfig{
+			Rules: map[string]lintconfig.RuleConfig{
+				"test-files": {Severity: "off"},
+			},
+			CallPatterns: lintconfig.CallPatternsConfig{
+				Handler: lintconfig.LayerCallConfig{
+					NotAllowed: []string{"*.service.*"},
+				},
+			},
+		},
+	}
+	vs, err := lint.Violations(dir, cfg, dir)
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, v := range vs {
+		if v.Rule == "call-pattern" {
+			t.Fatalf("unexpected call-pattern violation: %v", v)
+		}
+	}
+}
+
+func TestViolations_callPattern_wildcardReceiver(t *testing.T) {
+	dir := t.TempDir()
+	write(t, dir, "ports.go", `package orders
+type OrdersRepository interface { Get() }
+type OrdersService interface { Do() }
+`)
+	write(t, dir, "repository.go", `package orders
+type Repository struct{}
+`)
+	write(t, dir, "service.go", `package orders
+type Service struct{}
+`)
+	write(t, dir, "handler.go", `package orders
+type Handler struct{}
+func (h *Handler) A() { h.svc.Do() }
+func (handler *Handler) B() { handler.svc.List() }
+`)
+	write(t, dir, "handler_test.go", `package orders
+import "testing"
+func TestX(t *testing.T) {}
+`)
+	write(t, dir, "service_test.go", `package orders
+import "testing"
+func TestY(t *testing.T) {}
+`)
+
+	cfg := lintconfig.Config{
+		Lint: lintconfig.LintConfig{
+			Rules: map[string]lintconfig.RuleConfig{
+				"test-files": {Severity: "off"},
+			},
+			CallPatterns: lintconfig.CallPatternsConfig{
+				Handler: lintconfig.LayerCallConfig{
+					NotAllowed: []string{"*.service.*"},
+				},
+			},
+		},
+	}
+	vs, err := lint.Violations(dir, cfg, dir)
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, v := range vs {
+		if v.Rule == "call-pattern" {
+			t.Fatalf("unexpected call-pattern violation: %v", v)
+		}
+	}
+}
+
 func TestViolations_nolintSuppressesRule(t *testing.T) {
 	dir := t.TempDir()
 	write(t, dir, "handler.go", `package orders
