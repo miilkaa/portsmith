@@ -2,16 +2,18 @@
 //
 // Available commands:
 //
-//	portsmith init  <app-name> [--module <path>] [--force]   — scaffold a new application
-//	portsmith gen   [--dry-run] [--all] [<pkg-dir>...]        — generate ports.go
-//	portsmith new   <pkg-dir>                                 — scaffold a new package
-//	portsmith mock  [<pkg-dir>...]                            — generate mocks via mockery
-//	portsmith check [<pkg-dir>...]                            — architecture linter
+//	portsmith init    <app-name> [--module <path>] [--force]   — scaffold a new application
+//	portsmith gen     [--dry-run] [--all] [<pkg-dir>...]        — generate ports.go
+//	portsmith new     <pkg-dir>                                 — scaffold a new package
+//	portsmith mock    [<pkg-dir>...]                            — generate mocks via mockery
+//	portsmith check   [<pkg-dir>...]                            — architecture linter
+//	portsmith version                                           — print version
 package main
 
 import (
 	"fmt"
 	"os"
+	"runtime/debug"
 
 	"github.com/miilkaa/portsmith/cmd/portsmith/check"
 	gencmd "github.com/miilkaa/portsmith/cmd/portsmith/gen"
@@ -41,6 +43,8 @@ func main() {
 		err = mockcmd.Run(args)
 	case "check":
 		err = check.Run(args)
+	case "version", "--version", "-v":
+		fmt.Println(buildVersion())
 	case "help", "--help", "-h":
 		printUsage()
 	default:
@@ -53,6 +57,32 @@ func main() {
 		fmt.Fprintf(os.Stderr, "portsmith %s: %v\n", cmd, err)
 		os.Exit(1)
 	}
+}
+
+// buildVersion returns the module version embedded by the Go toolchain at build time.
+// Returns "(devel)" when running via `go run` or an untagged local build.
+func buildVersion() string {
+	info, ok := debug.ReadBuildInfo()
+	if !ok {
+		return "(unknown)"
+	}
+	if info.Main.Version != "" && info.Main.Version != "(devel)" {
+		return "portsmith " + info.Main.Version
+	}
+	// For local builds, show VCS commit if available.
+	for _, s := range info.Settings {
+		if s.Key == "vcs.revision" && len(s.Value) >= 7 {
+			dirty := ""
+			for _, ss := range info.Settings {
+				if ss.Key == "vcs.modified" && ss.Value == "true" {
+					dirty = "-dirty"
+					break
+				}
+			}
+			return "portsmith (devel) " + s.Value[:7] + dirty
+		}
+	}
+	return "portsmith (devel)"
 }
 
 func printUsage() {
@@ -81,6 +111,9 @@ Usage:
   portsmith check [--stack gin-gorm|chi-sqlx] [<pkg-dir>...]
       Validate Clean Architecture rules. Exits with code 1 on violations.
       Prints detected stack; override with --stack. Suitable for CI/CD pipelines.
+
+  portsmith version
+      Print the installed version.
 
   portsmith help
       Print this help message.
