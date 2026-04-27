@@ -332,18 +332,34 @@ portsmith mock internal/orders
 
 ### `portsmith check`
 
-Validate architecture rules. Exits with code `1` on violations. Prints the detected stack (same resolution as `portsmith new`); override with `--stack` if needed.
+Validate architecture rules. Exits with code `1` on **error**-severity violations; **warning**-severity issues are printed but do not fail the command. Prints the detected stack (same resolution as `portsmith new`); override with `--stack` if needed.
 
 ```bash
 portsmith check ./internal/...
 portsmith check --stack gin-gorm ./internal/...
 ```
 
-Rules checked:
-- Handler does not import `gorm.io/gorm`, `jmoiron/sqlx`, or `database/sql`
-- Service does not import `net/http`, `gin`, or `chi`
-- Handler and Service structs use interfaces, not concrete types
-- `ports.go` exists when the three-file pattern is present
+Core rules (always on): `ports.go` presence when the three-file layout exists; handler must not import DB drivers; `service.go` must not import HTTP/routers; struct fields use ports, not concrete layer pointers; layer dependency direction (handler → service only, service → repository only); exported types stay in the right layer files; constructor parameters use interfaces; no `panic` in service/repository files; optional `context.Context` as first parameter on exported service/repository methods.
+
+Optional rules (via `portsmith.yaml` → `lint`): max file lines, max exported methods per service/handler, allowlisted cross-package `internal/...` imports, wiring-only calls to `New*Repository` / `New*Service` / `New*Handler`.
+
+Per-rule severity and inline suppress:
+
+```yaml
+# portsmith.yaml
+lint:
+  rules:
+    test-files:    { severity: warning }  # test file presence
+    context-first: { severity: warning }  # context.Context first
+    method-count:  { severity: warning }
+```
+
+```go
+//nolint:portsmith:handler-no-db
+import "gorm.io/gorm"
+```
+
+See [docs/en/architecture.md](docs/en/architecture.md#validating-the-architecture) for the full rule table and YAML examples.
 
 ---
 
