@@ -30,6 +30,9 @@ It gives your team:
 # Install the CLI
 go install github.com/miilkaa/portsmith/cmd/portsmith@latest
 
+# Create portsmith.yaml in an existing repo (interactive; UI language from locale)
+portsmith init
+
 # Scaffold a new package
 portsmith new internal/orders
 
@@ -297,6 +300,15 @@ testkit.Table(t, []testkit.Case{
 ---
 
 ## CLI tools
+
+### `portsmith init`
+
+Interactive wizard that writes **`portsmith.yaml`** in the **current directory**. It does not scaffold a full project — only the config file. Prompts use **Russian** when `LC_ALL`, `LC_MESSAGES`, or `LANG` indicates Russian (`ru*`); otherwise **English**. If `go.mod` is present, the module path is echoed in a header comment.
+
+```bash
+portsmith init
+portsmith init --force   # replace existing portsmith.yaml
+```
 
 ### `portsmith gen`
 

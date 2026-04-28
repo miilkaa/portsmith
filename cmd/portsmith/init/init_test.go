@@ -1,312 +1,194 @@
 package initcmd_test
 
-// init_test.go — contract tests for portsmith init command.
-//
-// TDD Red phase: all tests must fail before implementation exists.
-// The tests define the public contract of CheckDirty and RunWithFS.
-
 import (
-	"errors"
 	"os"
 	"path/filepath"
 	"strings"
 	"testing"
-	"testing/fstest"
 
 	initcmd "github.com/miilkaa/portsmith/cmd/portsmith/init"
 )
 
-// fakeExamplesFS returns a minimal fake embed.FS for testing.
-// Mirrors the structure of the real examples/ directory.
-func fakeExamplesFS() fstest.MapFS {
-	return fstest.MapFS{
-		"examples/clean_package_example_en/domain.go": &fstest.MapFile{Data: []byte("package example\n")},
-		"examples/clean_package_example_ru/domain.go": &fstest.MapFile{Data: []byte("package example\n")},
+func TestDetectLang_russianLocale(t *testing.T) {
+	t.Setenv("LANG", "ru_RU.UTF-8")
+	t.Setenv("LC_ALL", "")
+	t.Setenv("LC_MESSAGES", "")
+	if got := initcmd.DetectLang(); got != "ru" {
+		t.Fatalf("DetectLang() = %q, want ru", got)
 	}
 }
 
-// --- CheckDirty ---
-
-func TestCheckDirty_emptyDir(t *testing.T) {
-	dir := t.TempDir()
-	blocking, err := initcmd.CheckDirty(dir)
-	if err != nil {
-		t.Fatalf("unexpected error: %v", err)
-	}
-	if len(blocking) > 0 {
-		t.Errorf("expected no blocking files, got %v", blocking)
+func TestDetectLang_englishLocale(t *testing.T) {
+	t.Setenv("LANG", "en_US.UTF-8")
+	t.Setenv("LC_ALL", "")
+	t.Setenv("LC_MESSAGES", "")
+	if got := initcmd.DetectLang(); got != "en" {
+		t.Fatalf("DetectLang() = %q, want en", got)
 	}
 }
 
-func TestCheckDirty_harmlessFiles(t *testing.T) {
-	dir := t.TempDir()
-	writeFile(t, filepath.Join(dir, "go.mod"), "module myapp\ngo 1.22\n")
-	writeFile(t, filepath.Join(dir, "go.sum"), "")
-	writeFile(t, filepath.Join(dir, ".gitignore"), "*.log\n")
-	writeFile(t, filepath.Join(dir, "README.md"), "# hello\n")
-	writeFile(t, filepath.Join(dir, ".env.example"), "PORT=8080\n")
-	writeFile(t, filepath.Join(dir, "Makefile"), "test:\n\tgo test ./...\n")
-
-	blocking, err := initcmd.CheckDirty(dir)
-	if err != nil {
-		t.Fatalf("unexpected error: %v", err)
-	}
-	if len(blocking) > 0 {
-		t.Errorf("expected no blocking files, got %v", blocking)
+func TestDetectLang_LC_ALL_precedence(t *testing.T) {
+	t.Setenv("LANG", "en_US.UTF-8")
+	t.Setenv("LC_ALL", "ru_RU.UTF-8")
+	if got := initcmd.DetectLang(); got != "ru" {
+		t.Fatalf("DetectLang() = %q, want ru (LC_ALL first)", got)
 	}
 }
 
-func TestCheckDirty_rootGoFile(t *testing.T) {
-	dir := t.TempDir()
-	writeFile(t, filepath.Join(dir, "main.go"), "package main\n")
-
-	blocking, err := initcmd.CheckDirty(dir)
-	if err != nil {
-		t.Fatalf("unexpected error: %v", err)
-	}
-	if len(blocking) == 0 {
-		t.Error("expected blocking files, got none")
+func TestDetectLang_emptyDefaultsToEnglish(t *testing.T) {
+	t.Setenv("LANG", "")
+	t.Setenv("LC_ALL", "")
+	t.Setenv("LC_MESSAGES", "")
+	if got := initcmd.DetectLang(); got != "en" {
+		t.Fatalf("DetectLang() = %q, want en", got)
 	}
 }
 
-func TestCheckDirty_internalGoFile(t *testing.T) {
-	dir := t.TempDir()
-	os.MkdirAll(filepath.Join(dir, "internal", "orders"), 0o755)
-	writeFile(t, filepath.Join(dir, "internal", "orders", "domain.go"), "package orders\n")
-
-	blocking, err := initcmd.CheckDirty(dir)
-	if err != nil {
-		t.Fatalf("unexpected error: %v", err)
-	}
-	if len(blocking) == 0 {
-		t.Error("expected blocking files, got none")
-	}
-}
-
-func TestCheckDirty_cmdGoFile(t *testing.T) {
-	dir := t.TempDir()
-	os.MkdirAll(filepath.Join(dir, "cmd", "server"), 0o755)
-	writeFile(t, filepath.Join(dir, "cmd", "server", "main.go"), "package main\n")
-
-	blocking, err := initcmd.CheckDirty(dir)
-	if err != nil {
-		t.Fatalf("unexpected error: %v", err)
-	}
-	if len(blocking) == 0 {
-		t.Error("expected blocking files for cmd/server/main.go")
-	}
-}
-
-// --- Run (arg parsing) ---
-
-func TestRun_missingAppName_returnsError(t *testing.T) {
-	err := initcmd.Run([]string{})
+func TestRun_unexpectedArg(t *testing.T) {
+	err := initcmd.Run([]string{"extra"})
 	if err == nil {
-		t.Error("expected error when app-name is missing")
+		t.Fatal("expected error for unexpected argument")
+	}
+	if !strings.Contains(err.Error(), "unexpected") {
+		t.Fatalf("error should mention unexpected args: %v", err)
 	}
 }
 
-func TestRun_flagsAfterAppName(t *testing.T) {
-	// Verify that flags placed AFTER the positional app-name are parsed.
-	// We test this via RunWithFS in a temp dir rather than calling Run()
-	// (which uses os.Getwd() and would create files in the source tree).
-	parent := t.TempDir()
-	cfg := initcmd.Config{AppName: "myapp", Dir: parent, Module: "github.com/x/myapp"}
-
-	// Simulate what Run() does after splitFlagsAndPositionals reorders args:
-	// "myapp --module github.com/x/myapp" → module must be picked up.
-	if err := initcmd.RunWithFS(cfg, fakeExamplesFS()); err != nil {
-		t.Fatalf("unexpected error: %v", err)
+func TestRunWithOptions_writesPortsmithYAML(t *testing.T) {
+	dir := t.TempDir()
+	answers := &initcmd.WizardAnswers{
+		Stack:           "chi-sqlx",
+		LoggerImport:    "log/slog",
+		MaxLinesLimit:   300,
+		MaxMethodsLimit: 15,
+		WiringMode:      "default",
 	}
-
-	content := readFile(t, filepath.Join(parent, "myapp", "go.mod"))
-	if !strings.Contains(content, "github.com/x/myapp") {
-		t.Errorf("module from flag not applied, got:\n%s", content)
+	if err := initcmd.RunWithOptions(initcmd.Options{Dir: dir, Lang: "en", Answers: answers}); err != nil {
+		t.Fatal(err)
 	}
-}
-
-// --- RunWithFS ---
-
-func TestRunWithFS_emptyDir_createsFiles(t *testing.T) {
-	parent := t.TempDir()
-	cfg := initcmd.Config{AppName: "myapp", Dir: parent}
-
-	if err := initcmd.RunWithFS(cfg, fakeExamplesFS()); err != nil {
-		t.Fatalf("unexpected error: %v", err)
+	path := filepath.Join(dir, "portsmith.yaml")
+	raw := readFile(t, path)
+	if !strings.Contains(raw, "stack: chi-sqlx") {
+		t.Fatalf("missing stack in:\n%s", raw)
 	}
-
-	appDir := filepath.Join(parent, "myapp")
-	expectFiles(t, appDir, []string{
-		"cmd/server/main.go",
-		"go.mod",
-		".env.example",
-		"Makefile",
-		".gitignore",
-	})
-}
-
-func TestRunWithFS_copiesExamplesToInternal(t *testing.T) {
-	parent := t.TempDir()
-	cfg := initcmd.Config{AppName: "myapp", Dir: parent}
-
-	if err := initcmd.RunWithFS(cfg, fakeExamplesFS()); err != nil {
-		t.Fatalf("unexpected error: %v", err)
+	if !strings.Contains(raw, "allowed: log/slog") {
+		t.Fatalf("missing logger in:\n%s", raw)
 	}
-
-	appDir := filepath.Join(parent, "myapp")
-	expectFiles(t, appDir, []string{
-		"internal/clean_package_example_en/domain.go",
-		"internal/clean_package_example_ru/domain.go",
-	})
-}
-
-func TestRunWithFS_gitignoreIncludesExamples(t *testing.T) {
-	parent := t.TempDir()
-	cfg := initcmd.Config{AppName: "myapp", Dir: parent}
-
-	if err := initcmd.RunWithFS(cfg, fakeExamplesFS()); err != nil {
-		t.Fatalf("unexpected error: %v", err)
+	if !strings.Contains(raw, "limit: 300") {
+		t.Fatalf("missing max_lines in:\n%s", raw)
 	}
-
-	content := readFile(t, filepath.Join(parent, "myapp", ".gitignore"))
-	if !strings.Contains(content, "clean_package_example") {
-		t.Errorf(".gitignore should contain example patterns, got:\n%s", content)
+	if !strings.Contains(raw, "limit: 15") {
+		t.Fatalf("missing max_methods in:\n%s", raw)
+	}
+	if !strings.Contains(raw, "wire.go") || !strings.Contains(raw, "app.go") {
+		t.Fatalf("missing wiring files in:\n%s", raw)
 	}
 }
 
-func TestRunWithFS_dirtyDir_returnsError(t *testing.T) {
-	parent := t.TempDir()
-	appDir := filepath.Join(parent, "myapp")
-	os.MkdirAll(appDir, 0o755)
-	writeFile(t, filepath.Join(appDir, "main.go"), "package main\n")
+func TestRunWithOptions_moduleCommentFromGoMod(t *testing.T) {
+	dir := t.TempDir()
+	writeFile(t, filepath.Join(dir, "go.mod"), "module github.com/acme/demo\n\ngo 1.22\n")
+	answers := minimalAnswers()
+	if err := initcmd.RunWithOptions(initcmd.Options{Dir: dir, Lang: "en", Answers: answers}); err != nil {
+		t.Fatal(err)
+	}
+	raw := readFile(t, filepath.Join(dir, "portsmith.yaml"))
+	if !strings.Contains(raw, "# module: github.com/acme/demo") {
+		t.Fatalf("expected module comment in:\n%s", raw)
+	}
+}
 
-	cfg := initcmd.Config{AppName: "myapp", Dir: parent}
-	err := initcmd.RunWithFS(cfg, fakeExamplesFS())
+func TestRunWithOptions_existingFileErrors(t *testing.T) {
+	dir := t.TempDir()
+	path := filepath.Join(dir, "portsmith.yaml")
+	writeFile(t, path, "stack: chi-sqlx\n")
+	err := initcmd.RunWithOptions(initcmd.Options{Dir: dir, Answers: minimalAnswers()})
 	if err == nil {
-		t.Fatal("expected DirtyDirectoryError, got nil")
+		t.Fatal("expected error when portsmith.yaml exists")
 	}
-
-	var dirtyErr *initcmd.DirtyDirectoryError
-	if !errors.As(err, &dirtyErr) {
-		t.Errorf("expected *DirtyDirectoryError, got %T: %v", err, err)
-	}
-	if len(dirtyErr.Files) == 0 {
-		t.Error("DirtyDirectoryError should list the blocking files")
-	}
-}
-
-func TestRunWithFS_dirtyDir_force_succeeds(t *testing.T) {
-	parent := t.TempDir()
-	appDir := filepath.Join(parent, "myapp")
-	os.MkdirAll(appDir, 0o755)
-	writeFile(t, filepath.Join(appDir, "main.go"), "package main\n")
-
-	cfg := initcmd.Config{AppName: "myapp", Dir: parent, Force: true}
-	if err := initcmd.RunWithFS(cfg, fakeExamplesFS()); err != nil {
-		t.Fatalf("unexpected error with --force: %v", err)
-	}
-}
-
-func TestRunWithFS_moduleFromGoMod(t *testing.T) {
-	parent := t.TempDir()
-	appDir := filepath.Join(parent, "myapp")
-	os.MkdirAll(appDir, 0o755)
-	writeFile(t, filepath.Join(appDir, "go.mod"), "module github.com/user/myapp\n\ngo 1.22\n")
-
-	cfg := initcmd.Config{AppName: "myapp", Dir: parent}
-	if err := initcmd.RunWithFS(cfg, fakeExamplesFS()); err != nil {
+	if !strings.Contains(err.Error(), "already exists") {
 		t.Fatalf("unexpected error: %v", err)
 	}
+}
 
-	content := readFile(t, filepath.Join(appDir, "go.mod"))
-	if !strings.Contains(content, "github.com/user/myapp") {
-		t.Errorf("expected module name from go.mod, got:\n%s", content)
+func TestRunWithOptions_forceOverwrites(t *testing.T) {
+	dir := t.TempDir()
+	path := filepath.Join(dir, "portsmith.yaml")
+	writeFile(t, path, "stack: gin-gorm\n")
+	answers := minimalAnswers()
+	if err := initcmd.RunWithOptions(initcmd.Options{Dir: dir, Force: true, Answers: answers}); err != nil {
+		t.Fatal(err)
+	}
+	raw := readFile(t, path)
+	if !strings.Contains(raw, "stack: chi-sqlx") {
+		t.Fatalf("expected overwrite to chi-sqlx:\n%s", raw)
 	}
 }
 
-func TestRunWithFS_moduleFromFlag(t *testing.T) {
-	parent := t.TempDir()
-	cfg := initcmd.Config{AppName: "myapp", Dir: parent, Module: "github.com/company/myapp"}
-
-	if err := initcmd.RunWithFS(cfg, fakeExamplesFS()); err != nil {
-		t.Fatalf("unexpected error: %v", err)
+func TestRunWithOptions_skipLoggerAndLimits(t *testing.T) {
+	dir := t.TempDir()
+	answers := &initcmd.WizardAnswers{
+		Stack:           "chi-sqlx",
+		LoggerImport:    "",
+		MaxLinesLimit:   0,
+		MaxMethodsLimit: 0,
+		WiringMode:      "skip",
 	}
-
-	content := readFile(t, filepath.Join(parent, "myapp", "go.mod"))
-	if !strings.Contains(content, "github.com/company/myapp") {
-		t.Errorf("expected module from flag, got:\n%s", content)
+	if err := initcmd.RunWithOptions(initcmd.Options{Dir: dir, Answers: answers}); err != nil {
+		t.Fatal(err)
 	}
-}
-
-func TestRunWithFS_moduleFromAppName(t *testing.T) {
-	parent := t.TempDir()
-	cfg := initcmd.Config{AppName: "myapp", Dir: parent}
-
-	if err := initcmd.RunWithFS(cfg, fakeExamplesFS()); err != nil {
-		t.Fatalf("unexpected error: %v", err)
+	raw := readFile(t, filepath.Join(dir, "portsmith.yaml"))
+	if strings.Contains(raw, "\n  logger:\n") {
+		t.Fatalf("did not expect active logger block (uncommented):\n%s", raw)
 	}
-
-	content := readFile(t, filepath.Join(parent, "myapp", "go.mod"))
-	if !strings.Contains(content, "myapp") {
-		t.Errorf("expected module name 'myapp', got:\n%s", content)
+	if !strings.Contains(raw, "# max_lines:") {
+		t.Fatalf("expected commented max_lines:\n%s", raw)
 	}
-}
-
-func TestRunWithFS_createsGoMod_whenMissing(t *testing.T) {
-	parent := t.TempDir()
-	cfg := initcmd.Config{AppName: "myapp", Dir: parent}
-
-	if err := initcmd.RunWithFS(cfg, fakeExamplesFS()); err != nil {
-		t.Fatalf("unexpected error: %v", err)
+	if !strings.Contains(raw, "# max_methods:") {
+		t.Fatalf("expected commented max_methods:\n%s", raw)
 	}
-
-	if _, err := os.Stat(filepath.Join(parent, "myapp", "go.mod")); err != nil {
-		t.Errorf("expected go.mod to be created: %v", err)
+	if !strings.Contains(raw, "# wiring:") {
+		t.Fatalf("expected commented wiring:\n%s", raw)
 	}
 }
 
-func TestRunWithFS_skipsGoMod_whenPresent(t *testing.T) {
-	parent := t.TempDir()
-	appDir := filepath.Join(parent, "myapp")
-	os.MkdirAll(appDir, 0o755)
-
-	original := "module github.com/user/myapp\n\ngo 1.22\n"
-	writeFile(t, filepath.Join(appDir, "go.mod"), original)
-
-	cfg := initcmd.Config{AppName: "myapp", Dir: parent}
-	if err := initcmd.RunWithFS(cfg, fakeExamplesFS()); err != nil {
-		t.Fatalf("unexpected error: %v", err)
+func TestRunWithOptions_customWiring(t *testing.T) {
+	dir := t.TempDir()
+	answers := &initcmd.WizardAnswers{
+		Stack:           "gin-gorm",
+		WiringMode:      "custom",
+		WiringFiles:     "cmd/wire.go , app/wiring.go",
+		MaxLinesLimit:   150,
+		MaxMethodsLimit: 10,
 	}
-
-	content := readFile(t, filepath.Join(appDir, "go.mod"))
-	if content != original {
-		t.Errorf("go.mod should not be overwritten without --force, got:\n%s", content)
+	if err := initcmd.RunWithOptions(initcmd.Options{Dir: dir, Answers: answers}); err != nil {
+		t.Fatal(err)
 	}
-}
-
-func TestRunWithFS_mainGoContainsModuleName(t *testing.T) {
-	parent := t.TempDir()
-	cfg := initcmd.Config{AppName: "myapp", Dir: parent, Module: "github.com/acme/myapp"}
-
-	if err := initcmd.RunWithFS(cfg, fakeExamplesFS()); err != nil {
-		t.Fatalf("unexpected error: %v", err)
+	raw := readFile(t, filepath.Join(dir, "portsmith.yaml"))
+	if !strings.Contains(raw, "stack: gin-gorm") {
+		t.Fatalf("expected gin-gorm:\n%s", raw)
 	}
-
-	content := readFile(t, filepath.Join(parent, "myapp", "cmd", "server", "main.go"))
-	if !strings.Contains(content, "github.com/acme/myapp") {
-		t.Errorf("main.go should contain module name, got:\n%s", content)
+	if !strings.Contains(raw, "- cmd/wire.go") || !strings.Contains(raw, "- app/wiring.go") {
+		t.Fatalf("expected custom wiring list:\n%s", raw)
 	}
 }
 
-// --- helpers ---
+func minimalAnswers() *initcmd.WizardAnswers {
+	return &initcmd.WizardAnswers{
+		Stack:           "chi-sqlx",
+		MaxLinesLimit:   300,
+		MaxMethodsLimit: 0,
+		WiringMode:      "default",
+	}
+}
 
 func writeFile(t *testing.T, path, content string) {
 	t.Helper()
 	if err := os.MkdirAll(filepath.Dir(path), 0o755); err != nil {
-		t.Fatalf("mkdirAll %s: %v", filepath.Dir(path), err)
+		t.Fatalf("mkdir: %v", err)
 	}
 	if err := os.WriteFile(path, []byte(content), 0o644); err != nil {
-		t.Fatalf("writeFile %s: %v", path, err)
+		t.Fatalf("write: %v", err)
 	}
 }
 
@@ -314,17 +196,7 @@ func readFile(t *testing.T, path string) string {
 	t.Helper()
 	b, err := os.ReadFile(path)
 	if err != nil {
-		t.Fatalf("readFile %s: %v", path, err)
+		t.Fatalf("read: %v", err)
 	}
 	return string(b)
-}
-
-func expectFiles(t *testing.T, dir string, paths []string) {
-	t.Helper()
-	for _, p := range paths {
-		full := filepath.Join(dir, p)
-		if _, err := os.Stat(full); err != nil {
-			t.Errorf("expected file %s to exist: %v", p, err)
-		}
-	}
 }

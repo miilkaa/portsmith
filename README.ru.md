@@ -29,6 +29,9 @@
 # Установить CLI
 go install github.com/miilkaa/portsmith/cmd/portsmith@latest
 
+# Создать portsmith.yaml в существующем репозитории (интерактивно; язык — по локали)
+portsmith init
+
 # Создать новый пакет
 portsmith new internal/orders
 
@@ -250,6 +253,15 @@ testkit.Table(t, []testkit.Case{
 ---
 
 ## CLI-инструменты
+
+### `portsmith init`
+
+Интерактивный визард: создаёт **`portsmith.yaml`** в **текущей директории**. Полноценный проект не разворачивается — только конфиг. Язык подсказок: **русский**, если `LC_ALL`, `LC_MESSAGES` или `LANG` указывают на русскую локаль (`ru*`); иначе **английский**. При наличии `go.mod` путь модуля добавляется в комментарий в шапке файла.
+
+```bash
+portsmith init
+portsmith init --force   # перезаписать существующий portsmith.yaml
+```
 
 ### `portsmith gen`
 

@@ -2,7 +2,7 @@
 //
 // Available commands:
 //
-//	portsmith init    <app-name> [--module <path>] [--force]   — scaffold a new application
+//	portsmith init    [--force]                                   — interactive portsmith.yaml wizard
 //	portsmith gen     [--dry-run] [--all] [<pkg-dir>...]        — generate ports.go
 //	portsmith new     <pkg-dir>                                 — scaffold a new package
 //	portsmith mock    [<pkg-dir>...]                            — generate mocks via mockery
@@ -89,12 +89,12 @@ func printUsage() {
 	fmt.Print(`portsmith — Go Clean Architecture toolkit
 
 Usage:
-  portsmith init  <app-name> [--module <path>] [--force]
-      Scaffold a new application with Clean Architecture layout.
-      Creates cmd/server/main.go, go.mod, Makefile, .env.example,
-      and reference examples in internal/ (gitignored).
-      --module  Go module path (default: app-name)
-      --force   skip dirty-directory check and overwrite existing files
+  portsmith init  [--force]
+      Interactive wizard: writes portsmith.yaml in the current directory.
+      Prompt language follows LC_ALL / LC_MESSAGES / LANG (Russian if locale
+      starts with "ru", otherwise English). If go.mod exists, its module path
+      is added as a comment in the generated file.
+      --force   overwrite an existing portsmith.yaml
 
   portsmith gen   [--dry-run] [--all] [<pkg-dir>...]
       Generate ports.go for one or more packages.
@@ -119,8 +119,8 @@ Usage:
       Print this help message.
 
 Examples:
-  portsmith init myapp
-  portsmith init myapp --module github.com/acme/myapp
+  portsmith init
+  portsmith init --force
   portsmith gen --all
   portsmith gen internal/orders
   portsmith new internal/products
