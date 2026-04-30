@@ -300,7 +300,7 @@ portsmith mock internal/orders
 portsmith check ./internal/...
 ```
 
-Базовые правила (всегда): наличие `ports.go` при тройке handler/service/repository; запрет драйверов БД в handler-файлах; запрет HTTP/роутеров в `service.go`; поля через порты, не `*Service`/`*Repository`; направление зависимостей между слоями; экспортируемые типы только в «своих» файлах слоя; конструкторы на интерфейсах; запрет `panic` в service/repository; опционально `context.Context` первым параметром у экспортируемых методов сервиса/репозитория.
+Базовые правила (всегда): наличие `ports.go` при тройке handler/service/repository; запрет драйверов БД в handler-файлах; запрет HTTP/роутеров в `service.go`; поля через порты, не `*Service`/`*Repository`; направление зависимостей между слоями; экспортируемые типы только в «своих» файлах слоя; конструкторы на интерфейсах; запрет `panic` в service/repository; опционально `context.Context` первым параметром у экспортируемых методов сервиса/репозитория, кроме wiring/configuration-методов `Set*` и `With*`.
 
 Дополнительно через `portsmith.yaml` → `lint`: лимиты строк и методов, allowlist для `internal/...`, изоляция wiring для `New*Repository` / `New*Service` / `New*Handler`.
 

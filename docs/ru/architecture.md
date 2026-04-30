@@ -123,7 +123,7 @@ import "gorm.io/gorm"
 | `constructor-injection` | Конструкторы принимают порты-интерфейсы, не `*` на слой |
 | `test-files` | Наличие `service_test.go` / `handler_test.go` |
 | `no-panic` | Запрет `panic()` в `service*.go` / `repository*.go` |
-| `context-first` | У экспортируемых методов `*Service` / `*Repository` первый параметр — `context.Context` |
+| `context-first` | У экспортируемых методов `*Service` / `*Repository` первый параметр — `context.Context`; wiring/configuration-методы `Set*` и `With*` игнорируются |
 | `method-count` | Лимит экспортируемых методов (`lint.max_methods`) |
 | `wiring-isolation` | Вызовы `New*Repository` / `New*Service` / `New*Handler` только в wiring-файлах (`lint.wiring.allowed_files`) |
 | `call-pattern` | Опционально: запрет/шаблоны для `recv.field.method()` в handler/service (`lint.call_patterns`; см. ниже) |

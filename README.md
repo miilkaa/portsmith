@@ -351,7 +351,7 @@ portsmith check ./internal/...
 portsmith check --stack gin-gorm ./internal/...
 ```
 
-Core rules (always on): `ports.go` presence when the three-file layout exists; handler must not import DB drivers; `service.go` must not import HTTP/routers; struct fields use ports, not concrete layer pointers; layer dependency direction (handler → service only, service → repository only); exported types stay in the right layer files; constructor parameters use interfaces; no `panic` in service/repository files; optional `context.Context` as first parameter on exported service/repository methods.
+Core rules (always on): `ports.go` presence when the three-file layout exists; handler must not import DB drivers; `service.go` must not import HTTP/routers; struct fields use ports, not concrete layer pointers; layer dependency direction (handler → service only, service → repository only); exported types stay in the right layer files; constructor parameters use interfaces; no `panic` in service/repository files; optional `context.Context` as first parameter on exported service/repository methods except wiring/configuration methods named `Set*` or `With*`.
 
 Optional rules (via `portsmith.yaml` → `lint`): max file lines, max exported methods per service/handler, allowlisted cross-package `internal/...` imports, wiring-only calls to `New*Repository` / `New*Service` / `New*Handler`.
 

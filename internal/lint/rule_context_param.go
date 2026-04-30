@@ -3,6 +3,7 @@ package lint
 import (
 	"fmt"
 	"go/ast"
+	"strings"
 )
 
 func checkContextFirstParam(ctx CheckContext) []Violation {
@@ -26,6 +27,9 @@ func checkContextFirstParam(ctx CheckContext) []Violation {
 		if !fn.Name.IsExported() {
 			continue
 		}
+		if isContextFirstExemptMethod(fn.Name.Name) {
+			continue
+		}
 		params := fn.Type.Params.List
 		if len(params) == 0 {
 			continue
@@ -43,6 +47,10 @@ func checkContextFirstParam(ctx CheckContext) []Violation {
 		})
 	}
 	return vs
+}
+
+func isContextFirstExemptMethod(name string) bool {
+	return strings.HasPrefix(name, "Set") || strings.HasPrefix(name, "With")
 }
 
 func receiverTypeName(expr ast.Expr) string {

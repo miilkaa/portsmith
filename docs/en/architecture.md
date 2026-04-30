@@ -134,7 +134,7 @@ import "gorm.io/gorm"
 | `constructor-injection` | Constructors must take interface ports, not concrete layer pointers |
 | `test-files` | `service_test.go` / `handler_test.go` present |
 | `no-panic` | No `panic()` in `service*.go` / `repository*.go` |
-| `context-first` | Exported methods on `*Service` / `*Repository` should take `context.Context` first |
+| `context-first` | Exported methods on `*Service` / `*Repository` should take `context.Context` first; wiring/configuration methods named `Set*` or `With*` are ignored |
 | `method-count` | Max exported methods per `*Service` / `*Handler` (optional `lint.max_methods`) |
 | `wiring-isolation` | Calls to `New*Repository` / `New*Service` / `New*Handler` only in wiring files (`lint.wiring.allowed_files`) |
 | `call-pattern` | Optional: forbid/rename patterns for `recv.field.method()` in handler/service layer files (`lint.call_patterns`; see below) |

@@ -153,6 +153,39 @@ func f() { _ = slog.New(nil) }
 	}
 }
 
+func TestViolations_contextFirstExemptsWiringMethods(t *testing.T) {
+	dir := t.TempDir()
+	write(t, dir, "service.go", `package orders
+type Service struct{}
+type Client interface{}
+type Deps struct{}
+func (s *Service) SetClient(client Client) {}
+func (s *Service) WithDeps(deps *Deps) *Service { return s }
+func (s *Service) Do(input string) error { return nil }
+`)
+	cfg := lintconfig.Config{
+		Lint: lintconfig.LintConfig{
+			Rules: map[string]lintconfig.RuleConfig{
+				"test-files": {Severity: "off"},
+			},
+		},
+	}
+	vs, err := lint.Violations(dir, cfg, dir)
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	var contextFirst []lint.Violation
+	for _, v := range vs {
+		if v.Rule == "context-first" {
+			contextFirst = append(contextFirst, v)
+		}
+	}
+	if len(contextFirst) != 1 || !contains(contextFirst[0].Message, "Do") {
+		t.Fatalf("expected only Do to violate context-first, got %#v", contextFirst)
+	}
+}
+
 func TestViolations_callPattern_handlerNotAllowed(t *testing.T) {
 	dir := t.TempDir()
 	write(t, dir, "ports.go", `package orders
