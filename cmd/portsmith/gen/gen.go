@@ -9,6 +9,7 @@ import (
 	"sort"
 
 	"github.com/miilkaa/portsmith/internal/gen"
+	"golang.org/x/tools/go/packages"
 	"golang.org/x/tools/imports"
 )
 
@@ -16,6 +17,7 @@ import (
 func Run(args []string) error {
 	dryRun := false
 	all := false
+	scanCallers := false
 	var dirs []string
 
 	for _, a := range args {
@@ -24,6 +26,8 @@ func Run(args []string) error {
 			dryRun = true
 		case "--all":
 			all = true
+		case "--scan-callers":
+			scanCallers = true
 		default:
 			dirs = append(dirs, a)
 		}
@@ -47,15 +51,34 @@ func Run(args []string) error {
 		return fmt.Errorf("no package directories specified (use --all or provide paths)")
 	}
 
+	// When --scan-callers is enabled, load every package of the current module
+	// once with full type information and reuse for every genPackage call. This
+	// is the slow path (go/packages does full type-checking) but it is precise.
+	var (
+		modulePath string
+		modulePkgs []*packages.Package
+	)
+	if scanCallers {
+		mp, err := gen.DetectModulePath(".")
+		if err != nil {
+			return fmt.Errorf("--scan-callers requires a go.mod in the current dir: %w", err)
+		}
+		modulePath = mp
+		modulePkgs, err = gen.LoadModulePackages(".")
+		if err != nil {
+			return fmt.Errorf("load module packages: %w", err)
+		}
+	}
+
 	for _, d := range dirs {
-		if err := genPackage(d, dryRun); err != nil {
+		if err := genPackage(d, dryRun, scanCallers, modulePath, modulePkgs); err != nil {
 			return fmt.Errorf("%s: %w", d, err)
 		}
 	}
 	return nil
 }
 
-func genPackage(dir string, dryRun bool) error {
+func genPackage(dir string, dryRun, scanCallers bool, modulePath string, modulePkgs []*packages.Package) error {
 	base := filepath.Base(dir)
 
 	pkgName, err := gen.PackageName(filepath.Join(dir, "service.go"))
@@ -73,6 +96,16 @@ func genPackage(dir string, dryRun bool) error {
 	for _, body := range sources {
 		repoMethods = gen.Union(repoMethods, gen.CollectRepoCalls(body))
 		svcMethods = gen.Union(svcMethods, gen.CollectServiceCalls(body))
+	}
+
+	if scanCallers && modulePath != "" {
+		// dir may come in as "./internal/bots" or "internal/bots". Clean it to
+		// avoid producing a malformed import path with embedded "./".
+		relDir := filepath.ToSlash(filepath.Clean(dir))
+		targetImportPath := modulePath + "/" + relDir
+		extraRepo, extraSvc := gen.CollectCrossModuleCalls(modulePkgs, targetImportPath)
+		repoMethods = gen.Union(repoMethods, extraRepo)
+		svcMethods = gen.Union(svcMethods, extraSvc)
 	}
 
 	pkg, err := gen.ParsePackage(dir)

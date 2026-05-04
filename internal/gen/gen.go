@@ -10,11 +10,14 @@ import (
 	"go/ast"
 	"go/parser"
 	"go/token"
+	"go/types"
 	"os"
 	"path/filepath"
 	"regexp"
 	"sort"
 	"strings"
+
+	"golang.org/x/tools/go/packages"
 )
 
 // --- Call collection (regex-based) ---
@@ -225,6 +228,114 @@ func LoadSources(dir string) ([]string, error) {
 		bodies = append(bodies, string(b))
 	}
 	return bodies, nil
+}
+
+// --- Cross-module caller scanning (go/packages-based) ---
+
+// LoadModulePackages loads all packages of the Go module rooted at rootDir
+// with full type information. The returned slice can be reused across
+// multiple CollectCrossModuleCalls invocations to avoid redundant
+// type-checking when generating ports for many target packages in one run.
+//
+// rootDir must contain go.mod. Packages that fail to type-check are still
+// returned (with their .Errors populated) so callers can choose to use
+// partial type info; CollectCrossModuleCalls handles missing TypesInfo
+// gracefully.
+func LoadModulePackages(rootDir string) ([]*packages.Package, error) {
+	cfg := &packages.Config{
+		Mode: packages.NeedName | packages.NeedFiles | packages.NeedSyntax |
+			packages.NeedTypes | packages.NeedTypesInfo | packages.NeedDeps |
+			packages.NeedImports,
+		Dir: rootDir,
+	}
+	pkgs, err := packages.Load(cfg, "./...")
+	if err != nil {
+		return nil, fmt.Errorf("load packages from %q: %w", rootDir, err)
+	}
+	return pkgs, nil
+}
+
+// CollectCrossModuleCalls returns method names called on values of static
+// type *<targetImportPath>.Service or *<targetImportPath>.Repository in any
+// package of pkgs (excluding the target package itself). Use it to discover
+// the external surface of a domain when generating its ports.go interface.
+//
+// Type resolution is precise — it uses the loaded type info from
+// golang.org/x/tools/go/packages and therefore correctly handles struct
+// fields, function parameters, local variables, type aliases, embedded
+// fields, and named types declared in any caller package.
+//
+// Limitation: calls dispatched through interfaces (where the static receiver
+// type is the interface, not the concrete *Service/*Repository) are NOT
+// captured. The same applies to type assertions and reflection. Such calls
+// must be added to ports.go via the consumer-defined interface they actually
+// use, or by other means (e.g. manual ports.go entries).
+func CollectCrossModuleCalls(pkgs []*packages.Package, targetImportPath string) (repoMethods, svcMethods map[string]struct{}) {
+	repoMethods = map[string]struct{}{}
+	svcMethods = map[string]struct{}{}
+
+	for _, pkg := range pkgs {
+		if pkg.PkgPath == targetImportPath {
+			continue // intra-module is covered by CollectRepoCalls/CollectServiceCalls
+		}
+		if pkg.TypesInfo == nil {
+			continue
+		}
+		for _, file := range pkg.Syntax {
+			ast.Inspect(file, func(n ast.Node) bool {
+				call, ok := n.(*ast.CallExpr)
+				if !ok {
+					return true
+				}
+				sel, ok := call.Fun.(*ast.SelectorExpr)
+				if !ok {
+					return true
+				}
+				tv, ok := pkg.TypesInfo.Types[sel.X]
+				if !ok || tv.Type == nil {
+					return true
+				}
+				switch matchTargetType(tv.Type, targetImportPath) {
+				case "Service":
+					svcMethods[sel.Sel.Name] = struct{}{}
+				case "Repository":
+					repoMethods[sel.Sel.Name] = struct{}{}
+				}
+				return true
+			})
+		}
+	}
+	return repoMethods, svcMethods
+}
+
+// matchTargetType returns "Service" or "Repository" if t is a pointer to a
+// named type defined in targetImportPath whose name is one of those layers,
+// otherwise "". Pointer indirection is unwrapped and Go 1.22+ type aliases
+// (`type X = Y`) are resolved to their underlying named type, so a field
+// declared `*BotsService` where `type BotsService = bots.Service` matches
+// against targetImportPath "<...>/internal/bots".
+//
+// Interface types are NOT unwrapped — interface receivers don't expose the
+// concrete struct's surface and must reach the port via consumer-defined
+// interfaces.
+func matchTargetType(t types.Type, targetImportPath string) string {
+	ptr, ok := t.(*types.Pointer)
+	if !ok {
+		return ""
+	}
+	named, ok := types.Unalias(ptr.Elem()).(*types.Named)
+	if !ok {
+		return ""
+	}
+	obj := named.Obj()
+	if obj == nil || obj.Pkg() == nil || obj.Pkg().Path() != targetImportPath {
+		return ""
+	}
+	switch obj.Name() {
+	case "Service", "Repository":
+		return obj.Name()
+	}
+	return ""
 }
 
 // SortSet returns the keys of a set map sorted alphabetically.
