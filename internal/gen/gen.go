@@ -34,32 +34,31 @@ var (
 
 // CollectRepoCalls returns the set of Repository method names called in src.
 func CollectRepoCalls(src string) map[string]struct{} {
-	out := make(map[string]struct{})
-	for _, m := range repoCallRe.FindAllStringSubmatch(src, -1) {
-		out[m[1]] = struct{}{}
-	}
-	for _, m := range repoCallReAI.FindAllStringSubmatch(src, -1) {
-		out[m[1]] = struct{}{}
-	}
-	for alias := range collectRepoAliasNames(src) {
-		re := regexp.MustCompile(fmt.Sprintf(aliasExportedMethodCallT, regexp.QuoteMeta(alias)))
-		for _, m := range re.FindAllStringSubmatch(src, -1) {
-			out[m[1]] = struct{}{}
-		}
-	}
-	return out
+	return collectCalls(src,
+		[]*regexp.Regexp{repoCallRe, repoCallReAI},
+		collectRepoAliasNames(src))
 }
 
 // CollectServiceCalls returns the set of Service method names called in src.
 func CollectServiceCalls(src string) map[string]struct{} {
+	return collectCalls(src,
+		[]*regexp.Regexp{svcCallRe},
+		collectServiceAliasNames(src))
+}
+
+// collectCalls is the shared implementation behind CollectRepoCalls / CollectServiceCalls.
+// It unions matches from each direct regex with exported-only matches via local aliases.
+func collectCalls(src string, direct []*regexp.Regexp, aliases map[string]struct{}) map[string]struct{} {
 	out := make(map[string]struct{})
-	for _, m := range svcCallRe.FindAllStringSubmatch(src, -1) {
-		out[m[1]] = struct{}{}
+	for _, re := range direct {
+		for _, m := range re.FindAllStringSubmatch(src, -1) {
+			out[m[1]] = struct{}{}
+		}
 	}
-	for alias := range collectServiceAliasNames(src) {
+	for alias := range aliases {
 		re := regexp.MustCompile(fmt.Sprintf(aliasExportedMethodCallT, regexp.QuoteMeta(alias)))
-		for _, am := range re.FindAllStringSubmatch(src, -1) {
-			out[am[1]] = struct{}{}
+		for _, m := range re.FindAllStringSubmatch(src, -1) {
+			out[m[1]] = struct{}{}
 		}
 	}
 	return out
@@ -119,9 +118,15 @@ func isAliasRHS(src string, valueEnd int) bool {
 
 // --- AST-based method signature extraction ---
 
+// Package is a minimal view of a parsed Go package: just the files we need.
+// It replaces ast.Package, which was deprecated alongside parser.ParseDir.
+type Package struct {
+	Files []*ast.File
+}
+
 // MethodSigs parses pkg and returns a map of methodName → signature string
 // for all exported methods on *typeName.
-func MethodSigs(pkg *ast.Package, typeName string) map[string]string {
+func MethodSigs(pkg *Package, typeName string) map[string]string {
 	out := make(map[string]string)
 	for _, f := range pkg.Files {
 		for _, decl := range f.Decls {
@@ -151,22 +156,34 @@ func MethodSigs(pkg *ast.Package, typeName string) map[string]string {
 }
 
 // ParsePackage parses all non-test .go files in dir (excluding ports.go and adapters).
-func ParsePackage(dir string) (*ast.Package, error) {
-	fset := token.NewFileSet()
-	pkgs, err := parser.ParseDir(fset, dir, func(fi os.FileInfo) bool {
-		n := fi.Name()
-		if !strings.HasSuffix(n, ".go") || strings.HasSuffix(n, "_test.go") {
-			return false
-		}
-		return n != "ports.go" && n != "adapters.go" && !strings.HasSuffix(n, "_adapter.go")
-	}, parser.ParseComments)
+func ParsePackage(dir string) (*Package, error) {
+	entries, err := os.ReadDir(dir)
 	if err != nil {
 		return nil, err
 	}
-	for _, p := range pkgs {
-		return p, nil
+	fset := token.NewFileSet()
+	var files []*ast.File
+	for _, e := range entries {
+		if e.IsDir() {
+			continue
+		}
+		n := e.Name()
+		if !strings.HasSuffix(n, ".go") || strings.HasSuffix(n, "_test.go") {
+			continue
+		}
+		if n == "ports.go" || n == "adapters.go" || strings.HasSuffix(n, "_adapter.go") {
+			continue
+		}
+		f, err := parser.ParseFile(fset, filepath.Join(dir, n), nil, parser.ParseComments)
+		if err != nil {
+			return nil, err
+		}
+		files = append(files, f)
 	}
-	return nil, fmt.Errorf("no package found in %s", dir)
+	if len(files) == 0 {
+		return nil, fmt.Errorf("no package found in %s", dir)
+	}
+	return &Package{Files: files}, nil
 }
 
 // PackageName reads the package name from a Go source file.
@@ -177,6 +194,37 @@ func PackageName(path string) (string, error) {
 		return "", err
 	}
 	return f.Name.Name, nil
+}
+
+// LoadSources reads non-test Go source files from dir as raw strings,
+// excluding ports.go (the generator's output), adapters.go and *_adapter.go
+// (cross-domain bridges that hold foreign-typed repo fields). The returned
+// bodies feed into CollectRepoCalls / CollectServiceCalls which use regex
+// matching on raw source text.
+func LoadSources(dir string) ([]string, error) {
+	entries, err := os.ReadDir(dir)
+	if err != nil {
+		return nil, err
+	}
+	var bodies []string
+	for _, e := range entries {
+		if e.IsDir() {
+			continue
+		}
+		n := e.Name()
+		if !strings.HasSuffix(n, ".go") || strings.HasSuffix(n, "_test.go") || n == "ports.go" {
+			continue
+		}
+		if n == "adapters.go" || strings.HasSuffix(n, "_adapter.go") {
+			continue
+		}
+		b, err := os.ReadFile(filepath.Join(dir, n))
+		if err != nil {
+			return nil, err
+		}
+		bodies = append(bodies, string(b))
+	}
+	return bodies, nil
 }
 
 // SortSet returns the keys of a set map sorted alphabetically.
@@ -217,7 +265,7 @@ func PortPrefix(dirBase string) string {
 //
 // This fixes directory names such as "webpush" where PortPrefix yields "Webpush" while
 // the codebase uses the idiomatic "WebPush".
-func InferPortPrefix(pkg *ast.Package) (string, bool) {
+func InferPortPrefix(pkg *Package) (string, bool) {
 	var repoPfx, svcPfx string
 	for _, f := range pkg.Files {
 		for _, decl := range f.Decls {
@@ -302,7 +350,7 @@ func DetectModulePath(root string) (string, error) {
 	if err != nil {
 		return "", fmt.Errorf("gen: go.mod not found in %s: %w", root, err)
 	}
-	defer f.Close()
+	defer func() { _ = f.Close() }()
 
 	scanner := bufio.NewScanner(f)
 	for scanner.Scan() {

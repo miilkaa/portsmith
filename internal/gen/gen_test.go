@@ -9,10 +9,12 @@ package gen_test
 //  4. PortPrefix строит правильный префикс из имени директории.
 //  5. InferPortPrefix подхватывает WebPush из полей *Service/*Handler при «webpush» в имени папки.
 //  6. DetectModulePath читает module из go.mod в заданном корне.
+//  7. LoadSources читает не-тестовые .go файлы пакета, исключая ports.go и адаптеры.
 
 import (
 	"os"
 	"path/filepath"
+	"strings"
 	"testing"
 
 	"github.com/miilkaa/portsmith/internal/gen"
@@ -167,5 +169,74 @@ func TestDetectModulePath_errorWhenNoGoMod(t *testing.T) {
 	_, err := gen.DetectModulePath(dir)
 	if err == nil {
 		t.Error("expected error when go.mod is absent")
+	}
+}
+
+func TestLoadSources_includesNonTestGoFiles(t *testing.T) {
+	dir := t.TempDir()
+	files := map[string]string{
+		"service.go":    "package x\nfunc f() {}\n",
+		"handler.go":    "package x\nfunc g() {}\n",
+		"repository.go": "package x\nfunc h() {}\n",
+	}
+	for name, body := range files {
+		if err := os.WriteFile(filepath.Join(dir, name), []byte(body), 0o644); err != nil {
+			t.Fatalf("write %s: %v", name, err)
+		}
+	}
+
+	bodies, err := gen.LoadSources(dir)
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if len(bodies) != 3 {
+		t.Fatalf("expected 3 source bodies, got %d: %v", len(bodies), bodies)
+	}
+}
+
+func TestLoadSources_skipsExcludedFiles(t *testing.T) {
+	dir := t.TempDir()
+	files := map[string]string{
+		"service.go":          "package x\n",
+		"service_test.go":     "package x_test\n",
+		"ports.go":            "package x\n",
+		"adapters.go":         "package x\n",
+		"foo_adapter.go":      "package x\n",
+		"bar_adapter_test.go": "package x_test\n",
+		"README.md":           "skip me",
+	}
+	for name, body := range files {
+		if err := os.WriteFile(filepath.Join(dir, name), []byte(body), 0o644); err != nil {
+			t.Fatalf("write %s: %v", name, err)
+		}
+	}
+
+	bodies, err := gen.LoadSources(dir)
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if len(bodies) != 1 {
+		t.Fatalf("expected only service.go, got %d bodies: %v", len(bodies), bodies)
+	}
+	if !strings.Contains(bodies[0], "package x") {
+		t.Errorf("expected service.go body, got %q", bodies[0])
+	}
+}
+
+func TestLoadSources_emptyDirReturnsEmpty(t *testing.T) {
+	dir := t.TempDir()
+	bodies, err := gen.LoadSources(dir)
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if len(bodies) != 0 {
+		t.Errorf("expected no bodies for empty dir, got %d", len(bodies))
+	}
+}
+
+func TestLoadSources_errorWhenDirMissing(t *testing.T) {
+	_, err := gen.LoadSources("/nonexistent/portsmith/test/dir")
+	if err == nil {
+		t.Error("expected error when directory does not exist")
 	}
 }
