@@ -3,10 +3,14 @@ package check_test
 // check_test.go — integration tests for portsmith check (lint.Violations).
 
 import (
+	"bytes"
+	"io"
 	"os"
 	"path/filepath"
+	"strings"
 	"testing"
 
+	checkcmd "github.com/miilkaa/portsmith/cmd/portsmith/check"
 	"github.com/miilkaa/portsmith/internal/lint"
 	"github.com/miilkaa/portsmith/internal/lintconfig"
 )
@@ -154,6 +158,96 @@ type OrdersService interface{ Do(ctx context.Context) }`,
 	}
 }
 
+func TestRun_multiplePackagesPrintsSortedViolations(t *testing.T) {
+	root := t.TempDir()
+	writeCheckFile(t, root, "go.mod", "module example.com/app\n\ngo 1.22\n")
+	writeCheckFile(t, root, "portsmith.yaml", `lint:
+  rules:
+    test-files:
+      severity: off
+    service-no-http:
+      severity: warning
+`)
+	handlerDir := filepath.Join(root, "internal", "handlerbad")
+	writeCheckFile(t, handlerDir, "handler.go", `package handlerbad
+import "gorm.io/gorm"
+type Handler struct{ db *gorm.DB }
+`)
+	writeCheckFile(t, handlerDir, "service.go", `package handlerbad`)
+	writeCheckFile(t, handlerDir, "repository.go", `package handlerbad`)
+	writeCheckFile(t, handlerDir, "ports.go", `package handlerbad`)
+
+	serviceDir := filepath.Join(root, "internal", "servicebad")
+	writeCheckFile(t, serviceDir, "handler.go", `package servicebad`)
+	writeCheckFile(t, serviceDir, "service.go", `package servicebad
+import (
+	"context"
+	"net/http"
+)
+func (s *Service) Handle(ctx context.Context, w http.ResponseWriter) {}
+`)
+	writeCheckFile(t, serviceDir, "repository.go", `package servicebad`)
+	writeCheckFile(t, serviceDir, "ports.go", `package servicebad`)
+
+	wd, err := os.Getwd()
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := os.Chdir(root); err != nil {
+		t.Fatal(err)
+	}
+	defer func() {
+		if err := os.Chdir(wd); err != nil {
+			t.Fatalf("restore wd: %v", err)
+		}
+	}()
+
+	out, err := captureCheckStdout(func() error {
+		return checkcmd.Run([]string{"internal/servicebad", "internal/handlerbad"})
+	})
+	if err == nil || !strings.Contains(err.Error(), "1 error violation(s)") {
+		t.Fatalf("expected one error violation, got err=%v out=%s", err, out)
+	}
+	warnIdx := strings.Index(out, "warning [service-no-http]")
+	errIdx := strings.Index(out, "error   [handler-no-db]")
+	if warnIdx < 0 || errIdx < 0 {
+		t.Fatalf("expected warning and error output, got:\n%s", out)
+	}
+	if warnIdx > errIdx {
+		t.Fatalf("warnings should print before errors, got:\n%s", out)
+	}
+	if !strings.Contains(out, "2 violation(s)") ||
+		!strings.Contains(out, "handler-no-db: 1") ||
+		!strings.Contains(out, "service-no-http: 1") {
+		t.Fatalf("expected deterministic summary, got:\n%s", out)
+	}
+}
+
+func TestRun_missingPackageReturnsError(t *testing.T) {
+	root := t.TempDir()
+	writeCheckFile(t, root, "go.mod", "module example.com/app\n\ngo 1.22\n")
+
+	wd, err := os.Getwd()
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := os.Chdir(root); err != nil {
+		t.Fatal(err)
+	}
+	defer func() {
+		if err := os.Chdir(wd); err != nil {
+			t.Fatalf("restore wd: %v", err)
+		}
+	}()
+
+	_, err = captureCheckStdout(func() error {
+		return checkcmd.Run([]string{"internal/missing"})
+	})
+	if err == nil || !strings.Contains(err.Error(), "internal/missing") {
+		t.Fatalf("expected missing package error, got %v", err)
+	}
+}
+
 func containsMessage(violations []lint.Violation, substr string) bool {
 	for _, v := range violations {
 		if contains(v.Message, substr) {
@@ -174,4 +268,42 @@ func containsAt(s, sub string) bool {
 		}
 	}
 	return false
+}
+
+func writeCheckFile(t *testing.T, dir, name, content string) {
+	t.Helper()
+	if err := os.MkdirAll(dir, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(dir, name), []byte(content), 0o644); err != nil {
+		t.Fatal(err)
+	}
+}
+
+func captureCheckStdout(fn func() error) (string, error) {
+	old := os.Stdout
+	r, w, err := os.Pipe()
+	if err != nil {
+		return "", err
+	}
+	os.Stdout = w
+	defer func() {
+		os.Stdout = old
+	}()
+
+	runErr := fn()
+
+	closeErr := w.Close()
+	if closeErr != nil {
+		return "", closeErr
+	}
+
+	var buf bytes.Buffer
+	if _, err := io.Copy(&buf, r); err != nil {
+		return "", err
+	}
+	if err := r.Close(); err != nil {
+		return "", err
+	}
+	return buf.String(), runErr
 }

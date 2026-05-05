@@ -63,6 +63,24 @@ func (s *Service) DoWork(ctx context.Context) error {
 	}
 }
 
+func TestCollectRepoCallsWithAllowed_ignoresNonServiceReceiver(t *testing.T) {
+	src := `
+type SegmentCreatorAdapter struct { repo SegmentsRepository }
+func (a *SegmentCreatorAdapter) Load(ctx context.Context) {
+	a.repo.GetByID(ctx, id)
+}
+func (s *Service) Load(ctx context.Context) {
+	s.repo.GetConversation(ctx, id)
+}`
+	got := gen.CollectRepoCallsWithAllowed(src, []string{"*.repo.*"})
+	if _, ok := got["GetByID"]; ok {
+		t.Fatalf("adapter repo call must not be collected as Service repository method: %v", got)
+	}
+	if _, ok := got["GetConversation"]; !ok {
+		t.Fatalf("service repo call should still be collected: %v", got)
+	}
+}
+
 func TestCollectServiceCalls_directAndAlias(t *testing.T) {
 	src := `
 func (h *Handler) A() {

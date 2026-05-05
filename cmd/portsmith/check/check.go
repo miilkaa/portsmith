@@ -18,6 +18,7 @@ import (
 	"github.com/miilkaa/portsmith/internal/lint"
 	"github.com/miilkaa/portsmith/internal/lintconfig"
 	"github.com/miilkaa/portsmith/internal/stack"
+	"github.com/miilkaa/portsmith/internal/workpool"
 )
 
 // Run executes the check command for the given arguments.
@@ -38,30 +39,40 @@ func Run(args []string) error {
 		return err
 	}
 
-	var errViolations, warnViolations []lint.Violation
-	for _, dir := range dirs {
+	results := workpool.Run(dirs, func(_ int, dir string) (checkResult, error) {
 		root, err := stack.FindProjectRoot(dir)
 		if err != nil {
 			root = dir
 		}
 		cfg, lerr := lintconfig.Load(root)
 		if lerr != nil {
-			return fmt.Errorf("%s: %w", root, lerr)
+			return checkResult{}, fmt.Errorf("%s: %w", root, lerr)
 		}
 		vs, verr := lint.Violations(dir, cfg, root)
 		if verr != nil {
-			return fmt.Errorf("%s: %w", dir, verr)
+			return checkResult{}, verr
 		}
+		var result checkResult
 		for _, v := range vs {
 			switch cfg.Lint.RuleSeverity(v.Rule) {
 			case lintconfig.SeverityOff:
 				continue
 			case lintconfig.SeverityWarning:
-				warnViolations = append(warnViolations, v)
+				result.warnViolations = append(result.warnViolations, v)
 			default:
-				errViolations = append(errViolations, v)
+				result.errViolations = append(result.errViolations, v)
 			}
 		}
+		return result, nil
+	})
+
+	var errViolations, warnViolations []lint.Violation
+	for _, result := range results {
+		if result.Err != nil {
+			return fmt.Errorf("%s: %w", result.Item, result.Err)
+		}
+		warnViolations = append(warnViolations, result.Value.warnViolations...)
+		errViolations = append(errViolations, result.Value.errViolations...)
 	}
 
 	sortViolations(warnViolations)
@@ -84,6 +95,11 @@ func Run(args []string) error {
 		fmt.Print(violationSummary(errViolations, warnViolations))
 	}
 	return nil
+}
+
+type checkResult struct {
+	errViolations  []lint.Violation
+	warnViolations []lint.Violation
 }
 
 // sortViolations sorts by rule name first, then file, then line.
