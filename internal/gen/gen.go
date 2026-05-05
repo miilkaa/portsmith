@@ -10,11 +10,14 @@ import (
 	"go/ast"
 	"go/parser"
 	"go/token"
+	"go/types"
 	"os"
 	"path/filepath"
 	"regexp"
 	"sort"
 	"strings"
+
+	"golang.org/x/tools/go/packages"
 )
 
 // --- Call collection (regex-based) ---
@@ -34,32 +37,31 @@ var (
 
 // CollectRepoCalls returns the set of Repository method names called in src.
 func CollectRepoCalls(src string) map[string]struct{} {
-	out := make(map[string]struct{})
-	for _, m := range repoCallRe.FindAllStringSubmatch(src, -1) {
-		out[m[1]] = struct{}{}
-	}
-	for _, m := range repoCallReAI.FindAllStringSubmatch(src, -1) {
-		out[m[1]] = struct{}{}
-	}
-	for alias := range collectRepoAliasNames(src) {
-		re := regexp.MustCompile(fmt.Sprintf(aliasExportedMethodCallT, regexp.QuoteMeta(alias)))
-		for _, m := range re.FindAllStringSubmatch(src, -1) {
-			out[m[1]] = struct{}{}
-		}
-	}
-	return out
+	return collectCalls(src,
+		[]*regexp.Regexp{repoCallRe, repoCallReAI},
+		collectRepoAliasNames(src))
 }
 
 // CollectServiceCalls returns the set of Service method names called in src.
 func CollectServiceCalls(src string) map[string]struct{} {
+	return collectCalls(src,
+		[]*regexp.Regexp{svcCallRe},
+		collectServiceAliasNames(src))
+}
+
+// collectCalls is the shared implementation behind CollectRepoCalls / CollectServiceCalls.
+// It unions matches from each direct regex with exported-only matches via local aliases.
+func collectCalls(src string, direct []*regexp.Regexp, aliases map[string]struct{}) map[string]struct{} {
 	out := make(map[string]struct{})
-	for _, m := range svcCallRe.FindAllStringSubmatch(src, -1) {
-		out[m[1]] = struct{}{}
+	for _, re := range direct {
+		for _, m := range re.FindAllStringSubmatch(src, -1) {
+			out[m[1]] = struct{}{}
+		}
 	}
-	for alias := range collectServiceAliasNames(src) {
+	for alias := range aliases {
 		re := regexp.MustCompile(fmt.Sprintf(aliasExportedMethodCallT, regexp.QuoteMeta(alias)))
-		for _, am := range re.FindAllStringSubmatch(src, -1) {
-			out[am[1]] = struct{}{}
+		for _, m := range re.FindAllStringSubmatch(src, -1) {
+			out[m[1]] = struct{}{}
 		}
 	}
 	return out
@@ -119,9 +121,15 @@ func isAliasRHS(src string, valueEnd int) bool {
 
 // --- AST-based method signature extraction ---
 
+// Package is a minimal view of a parsed Go package: just the files we need.
+// It replaces ast.Package, which was deprecated alongside parser.ParseDir.
+type Package struct {
+	Files []*ast.File
+}
+
 // MethodSigs parses pkg and returns a map of methodName → signature string
 // for all exported methods on *typeName.
-func MethodSigs(pkg *ast.Package, typeName string) map[string]string {
+func MethodSigs(pkg *Package, typeName string) map[string]string {
 	out := make(map[string]string)
 	for _, f := range pkg.Files {
 		for _, decl := range f.Decls {
@@ -151,22 +159,34 @@ func MethodSigs(pkg *ast.Package, typeName string) map[string]string {
 }
 
 // ParsePackage parses all non-test .go files in dir (excluding ports.go and adapters).
-func ParsePackage(dir string) (*ast.Package, error) {
-	fset := token.NewFileSet()
-	pkgs, err := parser.ParseDir(fset, dir, func(fi os.FileInfo) bool {
-		n := fi.Name()
-		if !strings.HasSuffix(n, ".go") || strings.HasSuffix(n, "_test.go") {
-			return false
-		}
-		return n != "ports.go" && n != "adapters.go" && !strings.HasSuffix(n, "_adapter.go")
-	}, parser.ParseComments)
+func ParsePackage(dir string) (*Package, error) {
+	entries, err := os.ReadDir(dir)
 	if err != nil {
 		return nil, err
 	}
-	for _, p := range pkgs {
-		return p, nil
+	fset := token.NewFileSet()
+	var files []*ast.File
+	for _, e := range entries {
+		if e.IsDir() {
+			continue
+		}
+		n := e.Name()
+		if !strings.HasSuffix(n, ".go") || strings.HasSuffix(n, "_test.go") {
+			continue
+		}
+		if n == "ports.go" || n == "adapters.go" || strings.HasSuffix(n, "_adapter.go") {
+			continue
+		}
+		f, err := parser.ParseFile(fset, filepath.Join(dir, n), nil, parser.ParseComments)
+		if err != nil {
+			return nil, err
+		}
+		files = append(files, f)
 	}
-	return nil, fmt.Errorf("no package found in %s", dir)
+	if len(files) == 0 {
+		return nil, fmt.Errorf("no package found in %s", dir)
+	}
+	return &Package{Files: files}, nil
 }
 
 // PackageName reads the package name from a Go source file.
@@ -177,6 +197,145 @@ func PackageName(path string) (string, error) {
 		return "", err
 	}
 	return f.Name.Name, nil
+}
+
+// LoadSources reads non-test Go source files from dir as raw strings,
+// excluding ports.go (the generator's output), adapters.go and *_adapter.go
+// (cross-domain bridges that hold foreign-typed repo fields). The returned
+// bodies feed into CollectRepoCalls / CollectServiceCalls which use regex
+// matching on raw source text.
+func LoadSources(dir string) ([]string, error) {
+	entries, err := os.ReadDir(dir)
+	if err != nil {
+		return nil, err
+	}
+	var bodies []string
+	for _, e := range entries {
+		if e.IsDir() {
+			continue
+		}
+		n := e.Name()
+		if !strings.HasSuffix(n, ".go") || strings.HasSuffix(n, "_test.go") || n == "ports.go" {
+			continue
+		}
+		if n == "adapters.go" || strings.HasSuffix(n, "_adapter.go") {
+			continue
+		}
+		b, err := os.ReadFile(filepath.Join(dir, n))
+		if err != nil {
+			return nil, err
+		}
+		bodies = append(bodies, string(b))
+	}
+	return bodies, nil
+}
+
+// --- Cross-module caller scanning (go/packages-based) ---
+
+// LoadModulePackages loads all packages of the Go module rooted at rootDir
+// with full type information. The returned slice can be reused across
+// multiple CollectCrossModuleCalls invocations to avoid redundant
+// type-checking when generating ports for many target packages in one run.
+//
+// rootDir must contain go.mod. Packages that fail to type-check are still
+// returned (with their .Errors populated) so callers can choose to use
+// partial type info; CollectCrossModuleCalls handles missing TypesInfo
+// gracefully.
+func LoadModulePackages(rootDir string) ([]*packages.Package, error) {
+	cfg := &packages.Config{
+		Mode: packages.NeedName | packages.NeedFiles | packages.NeedSyntax |
+			packages.NeedTypes | packages.NeedTypesInfo | packages.NeedDeps |
+			packages.NeedImports,
+		Dir: rootDir,
+	}
+	pkgs, err := packages.Load(cfg, "./...")
+	if err != nil {
+		return nil, fmt.Errorf("load packages from %q: %w", rootDir, err)
+	}
+	return pkgs, nil
+}
+
+// CollectCrossModuleCalls returns method names called on values of static
+// type *<targetImportPath>.Service or *<targetImportPath>.Repository in any
+// package of pkgs (excluding the target package itself). Use it to discover
+// the external surface of a domain when generating its ports.go interface.
+//
+// Type resolution is precise — it uses the loaded type info from
+// golang.org/x/tools/go/packages and therefore correctly handles struct
+// fields, function parameters, local variables, type aliases, embedded
+// fields, and named types declared in any caller package.
+//
+// Limitation: calls dispatched through interfaces (where the static receiver
+// type is the interface, not the concrete *Service/*Repository) are NOT
+// captured. The same applies to type assertions and reflection. Such calls
+// must be added to ports.go via the consumer-defined interface they actually
+// use, or by other means (e.g. manual ports.go entries).
+func CollectCrossModuleCalls(pkgs []*packages.Package, targetImportPath string) (repoMethods, svcMethods map[string]struct{}) {
+	repoMethods = map[string]struct{}{}
+	svcMethods = map[string]struct{}{}
+
+	for _, pkg := range pkgs {
+		if pkg.PkgPath == targetImportPath {
+			continue // intra-module is covered by CollectRepoCalls/CollectServiceCalls
+		}
+		if pkg.TypesInfo == nil {
+			continue
+		}
+		for _, file := range pkg.Syntax {
+			ast.Inspect(file, func(n ast.Node) bool {
+				call, ok := n.(*ast.CallExpr)
+				if !ok {
+					return true
+				}
+				sel, ok := call.Fun.(*ast.SelectorExpr)
+				if !ok {
+					return true
+				}
+				tv, ok := pkg.TypesInfo.Types[sel.X]
+				if !ok || tv.Type == nil {
+					return true
+				}
+				switch matchTargetType(tv.Type, targetImportPath) {
+				case "Service":
+					svcMethods[sel.Sel.Name] = struct{}{}
+				case "Repository":
+					repoMethods[sel.Sel.Name] = struct{}{}
+				}
+				return true
+			})
+		}
+	}
+	return repoMethods, svcMethods
+}
+
+// matchTargetType returns "Service" or "Repository" if t is a pointer to a
+// named type defined in targetImportPath whose name is one of those layers,
+// otherwise "". Pointer indirection is unwrapped and Go 1.22+ type aliases
+// (`type X = Y`) are resolved to their underlying named type, so a field
+// declared `*BotsService` where `type BotsService = bots.Service` matches
+// against targetImportPath "<...>/internal/bots".
+//
+// Interface types are NOT unwrapped — interface receivers don't expose the
+// concrete struct's surface and must reach the port via consumer-defined
+// interfaces.
+func matchTargetType(t types.Type, targetImportPath string) string {
+	ptr, ok := t.(*types.Pointer)
+	if !ok {
+		return ""
+	}
+	named, ok := types.Unalias(ptr.Elem()).(*types.Named)
+	if !ok {
+		return ""
+	}
+	obj := named.Obj()
+	if obj == nil || obj.Pkg() == nil || obj.Pkg().Path() != targetImportPath {
+		return ""
+	}
+	switch obj.Name() {
+	case "Service", "Repository":
+		return obj.Name()
+	}
+	return ""
 }
 
 // SortSet returns the keys of a set map sorted alphabetically.
@@ -217,7 +376,7 @@ func PortPrefix(dirBase string) string {
 //
 // This fixes directory names such as "webpush" where PortPrefix yields "Webpush" while
 // the codebase uses the idiomatic "WebPush".
-func InferPortPrefix(pkg *ast.Package) (string, bool) {
+func InferPortPrefix(pkg *Package) (string, bool) {
 	var repoPfx, svcPfx string
 	for _, f := range pkg.Files {
 		for _, decl := range f.Decls {
@@ -302,7 +461,7 @@ func DetectModulePath(root string) (string, error) {
 	if err != nil {
 		return "", fmt.Errorf("gen: go.mod not found in %s: %w", root, err)
 	}
-	defer f.Close()
+	defer func() { _ = f.Close() }()
 
 	scanner := bufio.NewScanner(f)
 	for scanner.Scan() {
