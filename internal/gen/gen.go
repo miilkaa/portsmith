@@ -46,7 +46,7 @@ func CollectRepoCalls(src string) map[string]struct{} {
 // built-in conventions plus any three-level call patterns from allowed.
 func CollectRepoCallsWithAllowed(src string, allowed []string) map[string]struct{} {
 	out := CollectRepoCalls(src)
-	return Union(out, collectAllowedCalls(src, allowed))
+	return Union(out, collectAllowedCalls(src, allowed, "Service"))
 }
 
 // CollectServiceCalls returns the set of Service method names called in src.
@@ -60,7 +60,7 @@ func CollectServiceCalls(src string) map[string]struct{} {
 // built-in conventions plus any three-level call patterns from allowed.
 func CollectServiceCallsWithAllowed(src string, allowed []string) map[string]struct{} {
 	out := CollectServiceCalls(src)
-	return Union(out, collectAllowedCalls(src, allowed))
+	return Union(out, collectAllowedCalls(src, allowed, "Handler"))
 }
 
 // collectCalls is the shared implementation behind CollectRepoCalls / CollectServiceCalls.
@@ -81,7 +81,46 @@ func collectCalls(src string, direct []*regexp.Regexp, aliases map[string]struct
 	return out
 }
 
-func collectAllowedCalls(src string, allowed []string) map[string]struct{} {
+func collectAllowedCalls(src string, allowed []string, receiverType string) map[string]struct{} {
+	out := make(map[string]struct{})
+	if len(allowed) == 0 {
+		return out
+	}
+
+	fset := token.NewFileSet()
+	parseSrc := src
+	offsetDelta := 0
+	f, err := parser.ParseFile(fset, "", parseSrc, 0)
+	if err != nil {
+		const packagePrefix = "package p\n"
+		parseSrc = packagePrefix + src
+		offsetDelta = len(packagePrefix)
+		fset = token.NewFileSet()
+		f, err = parser.ParseFile(fset, "", parseSrc, 0)
+	}
+	if err != nil {
+		return out
+	}
+
+	for _, decl := range f.Decls {
+		fn, ok := decl.(*ast.FuncDecl)
+		if !ok || fn.Recv == nil || fn.Body == nil || len(fn.Recv.List) != 1 {
+			continue
+		}
+		if genReceiverTypeName(fn.Recv.List[0].Type) != receiverType {
+			continue
+		}
+		start := fset.Position(fn.Body.Pos()).Offset - offsetDelta
+		end := fset.Position(fn.Body.End()).Offset - offsetDelta
+		if start < 0 || end > len(src) || start >= end {
+			continue
+		}
+		Union(out, collectAllowedCallsInScope(src[start:end], allowed))
+	}
+	return out
+}
+
+func collectAllowedCallsInScope(src string, allowed []string) map[string]struct{} {
 	out := make(map[string]struct{})
 	aliases := make(map[string]struct{})
 	for _, raw := range allowed {
@@ -103,6 +142,18 @@ func collectAllowedCalls(src string, allowed []string) map[string]struct{} {
 		}
 	}
 	return out
+}
+
+func genReceiverTypeName(expr ast.Expr) string {
+	switch t := expr.(type) {
+	case *ast.StarExpr:
+		if id, ok := t.X.(*ast.Ident); ok {
+			return id.Name
+		}
+	case *ast.Ident:
+		return t.Name
+	}
+	return ""
 }
 
 func collectDirectAllowedCalls(src, recv, field, method string) []string {

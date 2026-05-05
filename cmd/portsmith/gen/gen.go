@@ -7,11 +7,14 @@ import (
 	"os"
 	"path/filepath"
 	"sort"
+	"sync"
+	"time"
 
 	genlib "github.com/miilkaa/portsmith/internal/gen"
 	"github.com/miilkaa/portsmith/internal/lint"
 	"github.com/miilkaa/portsmith/internal/lintconfig"
 	"github.com/miilkaa/portsmith/internal/stack"
+	"github.com/miilkaa/portsmith/internal/workpool"
 	"golang.org/x/tools/go/packages"
 	"golang.org/x/tools/imports"
 )
@@ -21,6 +24,7 @@ func Run(args []string) error {
 	dryRun := false
 	all := false
 	scanCallers := false
+	verbose := false
 	var dirs []string
 
 	for _, a := range args {
@@ -31,6 +35,8 @@ func Run(args []string) error {
 			all = true
 		case "--scan-callers":
 			scanCallers = true
+		case "-v", "--verbose":
+			verbose = true
 		default:
 			dirs = append(dirs, a)
 		}
@@ -54,7 +60,14 @@ func Run(args []string) error {
 		return fmt.Errorf("no package directories specified (use --all or provide paths)")
 	}
 
-	configs, err := checkCallPatternsBeforeGen(dirs)
+	progress := newProgressLogger(verbose)
+	started := time.Now()
+	progress.printf("portsmith gen: workers=%d packages=%d\n", workpool.WorkerCount(len(dirs)), len(dirs))
+	defer func() {
+		progress.printf("portsmith gen: completed in %s\n", time.Since(started).Round(time.Millisecond))
+	}()
+
+	configs, err := checkCallPatternsBeforeGen(dirs, progress)
 	if err != nil {
 		return err
 	}
@@ -78,25 +91,35 @@ func Run(args []string) error {
 		}
 	}
 
-	for _, d := range dirs {
-		if err := genPackage(d, configs[d], dryRun, scanCallers, modulePath, modulePkgs); err != nil {
-			return fmt.Errorf("%s: %w", d, err)
+	genResults := workpool.Run(dirs, func(_ int, dir string) (string, error) {
+		progress.packageStart("generate", dir)
+		started := time.Now()
+		out, err := genPackage(dir, configs[dir], dryRun, scanCallers, modulePath, modulePkgs)
+		progress.packageDone("generate", dir, started, err)
+		return out, err
+	})
+	for _, result := range genResults {
+		if result.Err != nil {
+			return fmt.Errorf("%s: %w", result.Item, result.Err)
+		}
+		if dryRun && result.Value != "" {
+			fmt.Print(result.Value)
 		}
 	}
 	return nil
 }
 
-func genPackage(dir string, cfg lintconfig.Config, dryRun, scanCallers bool, modulePath string, modulePkgs []*packages.Package) error {
+func genPackage(dir string, cfg lintconfig.Config, dryRun, scanCallers bool, modulePath string, modulePkgs []*packages.Package) (string, error) {
 	base := filepath.Base(dir)
 
 	pkgName, err := genlib.PackageName(filepath.Join(dir, "service.go"))
 	if err != nil {
-		return err
+		return "", err
 	}
 
 	sources, err := genlib.LoadSources(dir)
 	if err != nil {
-		return err
+		return "", err
 	}
 
 	repoMethods := make(map[string]struct{})
@@ -118,7 +141,7 @@ func genPackage(dir string, cfg lintconfig.Config, dryRun, scanCallers bool, mod
 
 	pkg, err := genlib.ParsePackage(dir)
 	if err != nil {
-		return err
+		return "", err
 	}
 
 	prefix := genlib.PortPrefix(base)
@@ -144,7 +167,7 @@ func genPackage(dir string, cfg lintconfig.Config, dryRun, scanCallers bool, mod
 	for _, name := range genlib.SortSet(repoMethods) {
 		sig, ok := repoSigs[name]
 		if !ok {
-			return fmt.Errorf("repository method %q called but not found on *Repository", name)
+			return "", fmt.Errorf("repository method %q called but not found on *Repository", name)
 		}
 		emit("\t%s\n", sig)
 	}
@@ -156,7 +179,7 @@ func genPackage(dir string, cfg lintconfig.Config, dryRun, scanCallers bool, mod
 	for _, name := range genlib.SortSet(svcMethods) {
 		sig, ok := svcSigs[name]
 		if !ok {
-			return fmt.Errorf("service method %q called from handler but not found on *Service", name)
+			return "", fmt.Errorf("service method %q called from handler but not found on *Service", name)
 		}
 		emit("\t%s\n", sig)
 	}
@@ -165,45 +188,66 @@ func genPackage(dir string, cfg lintconfig.Config, dryRun, scanCallers bool, mod
 
 	out, err := imports.Process("ports.go", buf.Bytes(), nil)
 	if err != nil {
-		return fmt.Errorf("format: %w\n%s", err, buf.String())
+		return "", fmt.Errorf("format: %w\n%s", err, buf.String())
 	}
 
 	if dryRun {
-		fmt.Printf("=== %s/ports.go ===\n%s\n", dir, out)
-		return nil
+		return fmt.Sprintf("=== %s/ports.go ===\n%s\n", dir, out), nil
 	}
 
 	target := filepath.Join(dir, "ports.go")
-	return os.WriteFile(target, out, 0o644)
+	return "", os.WriteFile(target, out, 0o644)
 }
 
-func checkCallPatternsBeforeGen(dirs []string) (map[string]lintconfig.Config, error) {
+type callPatternResult struct {
+	cfg            lintconfig.Config
+	errViolations  []lint.Violation
+	warnViolations []lint.Violation
+}
+
+func checkCallPatternsBeforeGen(dirs []string, progress *progressLogger) (map[string]lintconfig.Config, error) {
 	configs := make(map[string]lintconfig.Config, len(dirs))
 	var errViolations, warnViolations []lint.Violation
-	for _, dir := range dirs {
+	results := workpool.Run(dirs, func(_ int, dir string) (callPatternResult, error) {
+		progress.packageStart("call-pattern", dir)
+		started := time.Now()
 		root, err := stack.FindProjectRoot(dir)
 		if err != nil {
 			root = dir
 		}
 		cfg, err := lintconfig.Load(root)
 		if err != nil {
-			return nil, fmt.Errorf("%s: %w", root, err)
+			err = fmt.Errorf("%s: %w", root, err)
+			progress.packageDone("call-pattern", dir, started, err)
+			return callPatternResult{}, err
 		}
-		configs[dir] = cfg
 		vs, err := lint.CallPatternViolations(dir, cfg)
 		if err != nil {
-			return nil, fmt.Errorf("%s: %w", dir, err)
+			progress.packageDone("call-pattern", dir, started, err)
+			return callPatternResult{}, err
 		}
+		result := callPatternResult{cfg: cfg}
 		for _, v := range vs {
 			switch cfg.Lint.RuleSeverity(v.Rule) {
 			case lintconfig.SeverityWarning:
-				warnViolations = append(warnViolations, v)
+				result.warnViolations = append(result.warnViolations, v)
 			case lintconfig.SeverityOff:
 				continue
 			default:
-				errViolations = append(errViolations, v)
+				result.errViolations = append(result.errViolations, v)
 			}
 		}
+		progress.packageDone("call-pattern", dir, started, nil)
+		return result, nil
+	})
+
+	for _, result := range results {
+		if result.Err != nil {
+			return nil, fmt.Errorf("%s: %w", result.Item, result.Err)
+		}
+		configs[result.Item] = result.Value.cfg
+		warnViolations = append(warnViolations, result.Value.warnViolations...)
+		errViolations = append(errViolations, result.Value.errViolations...)
 	}
 
 	sortViolations(warnViolations)
@@ -218,6 +262,36 @@ func checkCallPatternsBeforeGen(dirs []string) (map[string]lintconfig.Config, er
 		return nil, fmt.Errorf("call-pattern check failed: %d error violation(s)", len(errViolations))
 	}
 	return configs, nil
+}
+
+type progressLogger struct {
+	enabled bool
+	mu      sync.Mutex
+}
+
+func newProgressLogger(enabled bool) *progressLogger {
+	return &progressLogger{enabled: enabled}
+}
+
+func (l *progressLogger) packageStart(phase, dir string) {
+	l.printf("portsmith gen: %s start %s\n", phase, dir)
+}
+
+func (l *progressLogger) packageDone(phase, dir string, started time.Time, err error) {
+	status := "done"
+	if err != nil {
+		status = "error"
+	}
+	l.printf("portsmith gen: %s %s %s in %s\n", phase, status, dir, time.Since(started).Round(time.Millisecond))
+}
+
+func (l *progressLogger) printf(format string, args ...any) {
+	if l == nil || !l.enabled {
+		return
+	}
+	l.mu.Lock()
+	defer l.mu.Unlock()
+	_, _ = fmt.Fprintf(os.Stderr, format, args...)
 }
 
 func sortViolations(vs []lint.Violation) {
