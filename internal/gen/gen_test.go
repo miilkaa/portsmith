@@ -47,6 +47,22 @@ func TestCollectRepoCalls_skipFalsePositive(t *testing.T) {
 	}
 }
 
+func TestCollectRepoCallsWithAllowed_directAndAlias(t *testing.T) {
+	src := `
+func (s *Service) DoWork(ctx context.Context) error {
+	s.storage.DirectCall(ctx)
+	store := s.storage
+	store.AliasCall(ctx)
+	return nil
+}`
+	got := gen.CollectRepoCallsWithAllowed(src, []string{"*.storage.*"})
+	for _, want := range []string{"DirectCall", "AliasCall"} {
+		if _, ok := got[want]; !ok {
+			t.Errorf("missing repo method %q in %v", want, got)
+		}
+	}
+}
+
 func TestCollectServiceCalls_directAndAlias(t *testing.T) {
 	src := `
 func (h *Handler) A() {
@@ -59,6 +75,36 @@ func (h *Handler) A() {
 		if _, ok := got[want]; !ok {
 			t.Errorf("missing service method %q in %v", want, got)
 		}
+	}
+}
+
+func TestCollectServiceCallsWithAllowed_directAndAlias(t *testing.T) {
+	src := `
+func (h *Handler) A() {
+	h.svc.DirectSvc(ctx)
+	service := h.svc
+	service.AliasSvc(ctx)
+}`
+	got := gen.CollectServiceCallsWithAllowed(src, []string{"*.svc.*"})
+	for _, want := range []string{"DirectSvc", "AliasSvc"} {
+		if _, ok := got[want]; !ok {
+			t.Errorf("missing service method %q in %v", want, got)
+		}
+	}
+}
+
+func TestCollectServiceCallsWithAllowed_exactMethod(t *testing.T) {
+	src := `
+func (h *Handler) A() {
+	h.svc.DirectSvc(ctx)
+	h.svc.Other(ctx)
+}`
+	got := gen.CollectServiceCallsWithAllowed(src, []string{"*.svc.DirectSvc"})
+	if _, ok := got["DirectSvc"]; !ok {
+		t.Errorf("missing exact service method in %v", got)
+	}
+	if _, ok := got["Other"]; ok {
+		t.Errorf("unexpected non-matching service method in %v", got)
 	}
 }
 

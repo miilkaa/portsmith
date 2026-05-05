@@ -8,7 +8,10 @@ import (
 	"path/filepath"
 	"sort"
 
-	"github.com/miilkaa/portsmith/internal/gen"
+	genlib "github.com/miilkaa/portsmith/internal/gen"
+	"github.com/miilkaa/portsmith/internal/lint"
+	"github.com/miilkaa/portsmith/internal/lintconfig"
+	"github.com/miilkaa/portsmith/internal/stack"
 	"golang.org/x/tools/go/packages"
 	"golang.org/x/tools/imports"
 )
@@ -51,6 +54,11 @@ func Run(args []string) error {
 		return fmt.Errorf("no package directories specified (use --all or provide paths)")
 	}
 
+	configs, err := checkCallPatternsBeforeGen(dirs)
+	if err != nil {
+		return err
+	}
+
 	// When --scan-callers is enabled, load every package of the current module
 	// once with full type information and reuse for every genPackage call. This
 	// is the slow path (go/packages does full type-checking) but it is precise.
@@ -59,34 +67,34 @@ func Run(args []string) error {
 		modulePkgs []*packages.Package
 	)
 	if scanCallers {
-		mp, err := gen.DetectModulePath(".")
+		mp, err := genlib.DetectModulePath(".")
 		if err != nil {
 			return fmt.Errorf("--scan-callers requires a go.mod in the current dir: %w", err)
 		}
 		modulePath = mp
-		modulePkgs, err = gen.LoadModulePackages(".")
+		modulePkgs, err = genlib.LoadModulePackages(".")
 		if err != nil {
 			return fmt.Errorf("load module packages: %w", err)
 		}
 	}
 
 	for _, d := range dirs {
-		if err := genPackage(d, dryRun, scanCallers, modulePath, modulePkgs); err != nil {
+		if err := genPackage(d, configs[d], dryRun, scanCallers, modulePath, modulePkgs); err != nil {
 			return fmt.Errorf("%s: %w", d, err)
 		}
 	}
 	return nil
 }
 
-func genPackage(dir string, dryRun, scanCallers bool, modulePath string, modulePkgs []*packages.Package) error {
+func genPackage(dir string, cfg lintconfig.Config, dryRun, scanCallers bool, modulePath string, modulePkgs []*packages.Package) error {
 	base := filepath.Base(dir)
 
-	pkgName, err := gen.PackageName(filepath.Join(dir, "service.go"))
+	pkgName, err := genlib.PackageName(filepath.Join(dir, "service.go"))
 	if err != nil {
 		return err
 	}
 
-	sources, err := gen.LoadSources(dir)
+	sources, err := genlib.LoadSources(dir)
 	if err != nil {
 		return err
 	}
@@ -94,8 +102,8 @@ func genPackage(dir string, dryRun, scanCallers bool, modulePath string, moduleP
 	repoMethods := make(map[string]struct{})
 	svcMethods := make(map[string]struct{})
 	for _, body := range sources {
-		repoMethods = gen.Union(repoMethods, gen.CollectRepoCalls(body))
-		svcMethods = gen.Union(svcMethods, gen.CollectServiceCalls(body))
+		repoMethods = genlib.Union(repoMethods, genlib.CollectRepoCallsWithAllowed(body, cfg.Lint.CallPatterns.Service.Allowed))
+		svcMethods = genlib.Union(svcMethods, genlib.CollectServiceCallsWithAllowed(body, cfg.Lint.CallPatterns.Handler.Allowed))
 	}
 
 	if scanCallers && modulePath != "" {
@@ -103,25 +111,25 @@ func genPackage(dir string, dryRun, scanCallers bool, modulePath string, moduleP
 		// avoid producing a malformed import path with embedded "./".
 		relDir := filepath.ToSlash(filepath.Clean(dir))
 		targetImportPath := modulePath + "/" + relDir
-		extraRepo, extraSvc := gen.CollectCrossModuleCalls(modulePkgs, targetImportPath)
-		repoMethods = gen.Union(repoMethods, extraRepo)
-		svcMethods = gen.Union(svcMethods, extraSvc)
+		extraRepo, extraSvc := genlib.CollectCrossModuleCalls(modulePkgs, targetImportPath)
+		repoMethods = genlib.Union(repoMethods, extraRepo)
+		svcMethods = genlib.Union(svcMethods, extraSvc)
 	}
 
-	pkg, err := gen.ParsePackage(dir)
+	pkg, err := genlib.ParsePackage(dir)
 	if err != nil {
 		return err
 	}
 
-	prefix := gen.PortPrefix(base)
-	if p, ok := gen.InferPortPrefix(pkg); ok {
+	prefix := genlib.PortPrefix(base)
+	if p, ok := genlib.InferPortPrefix(pkg); ok {
 		prefix = p
 	}
 	repoPort := prefix + "Repository"
 	svcPort := prefix + "Service"
 
-	repoSigs := gen.MethodSigs(pkg, "Repository")
-	svcSigs := gen.MethodSigs(pkg, "Service")
+	repoSigs := genlib.MethodSigs(pkg, "Repository")
+	svcSigs := genlib.MethodSigs(pkg, "Service")
 
 	var buf bytes.Buffer
 	// bytes.Buffer writes never fail; discard the error centrally to keep the linter quiet.
@@ -133,7 +141,7 @@ func genPackage(dir string, dryRun, scanCallers bool, modulePath string, moduleP
 
 	emit("// %s is the repository surface used by Service and Handler.\n", repoPort)
 	emit("type %s interface {\n", repoPort)
-	for _, name := range gen.SortSet(repoMethods) {
+	for _, name := range genlib.SortSet(repoMethods) {
 		sig, ok := repoSigs[name]
 		if !ok {
 			return fmt.Errorf("repository method %q called but not found on *Repository", name)
@@ -145,7 +153,7 @@ func genPackage(dir string, dryRun, scanCallers bool, modulePath string, moduleP
 
 	emit("// %s is the service surface used by Handler.\n", svcPort)
 	emit("type %s interface {\n", svcPort)
-	for _, name := range gen.SortSet(svcMethods) {
+	for _, name := range genlib.SortSet(svcMethods) {
 		sig, ok := svcSigs[name]
 		if !ok {
 			return fmt.Errorf("service method %q called from handler but not found on *Service", name)
@@ -167,6 +175,61 @@ func genPackage(dir string, dryRun, scanCallers bool, modulePath string, moduleP
 
 	target := filepath.Join(dir, "ports.go")
 	return os.WriteFile(target, out, 0o644)
+}
+
+func checkCallPatternsBeforeGen(dirs []string) (map[string]lintconfig.Config, error) {
+	configs := make(map[string]lintconfig.Config, len(dirs))
+	var errViolations, warnViolations []lint.Violation
+	for _, dir := range dirs {
+		root, err := stack.FindProjectRoot(dir)
+		if err != nil {
+			root = dir
+		}
+		cfg, err := lintconfig.Load(root)
+		if err != nil {
+			return nil, fmt.Errorf("%s: %w", root, err)
+		}
+		configs[dir] = cfg
+		vs, err := lint.CallPatternViolations(dir, cfg)
+		if err != nil {
+			return nil, fmt.Errorf("%s: %w", dir, err)
+		}
+		for _, v := range vs {
+			switch cfg.Lint.RuleSeverity(v.Rule) {
+			case lintconfig.SeverityWarning:
+				warnViolations = append(warnViolations, v)
+			case lintconfig.SeverityOff:
+				continue
+			default:
+				errViolations = append(errViolations, v)
+			}
+		}
+	}
+
+	sortViolations(warnViolations)
+	sortViolations(errViolations)
+	for _, v := range warnViolations {
+		fmt.Printf("warning %-24s %s\n", "["+v.Rule+"]", v.String())
+	}
+	for _, v := range errViolations {
+		fmt.Printf("error   %-24s %s\n", "["+v.Rule+"]", v.String())
+	}
+	if len(errViolations) > 0 {
+		return nil, fmt.Errorf("call-pattern check failed: %d error violation(s)", len(errViolations))
+	}
+	return configs, nil
+}
+
+func sortViolations(vs []lint.Violation) {
+	sort.Slice(vs, func(i, j int) bool {
+		if vs[i].Rule != vs[j].Rule {
+			return vs[i].Rule < vs[j].Rule
+		}
+		if vs[i].File != vs[j].File {
+			return vs[i].File < vs[j].File
+		}
+		return vs[i].Line < vs[j].Line
+	})
 }
 
 func hasFiles(dir string, names ...string) bool {

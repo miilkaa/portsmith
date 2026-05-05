@@ -42,11 +42,25 @@ func CollectRepoCalls(src string) map[string]struct{} {
 		collectRepoAliasNames(src))
 }
 
+// CollectRepoCallsWithAllowed returns Repository method calls collected by the
+// built-in conventions plus any three-level call patterns from allowed.
+func CollectRepoCallsWithAllowed(src string, allowed []string) map[string]struct{} {
+	out := CollectRepoCalls(src)
+	return Union(out, collectAllowedCalls(src, allowed))
+}
+
 // CollectServiceCalls returns the set of Service method names called in src.
 func CollectServiceCalls(src string) map[string]struct{} {
 	return collectCalls(src,
 		[]*regexp.Regexp{svcCallRe},
 		collectServiceAliasNames(src))
+}
+
+// CollectServiceCallsWithAllowed returns Service method calls collected by the
+// built-in conventions plus any three-level call patterns from allowed.
+func CollectServiceCallsWithAllowed(src string, allowed []string) map[string]struct{} {
+	out := CollectServiceCalls(src)
+	return Union(out, collectAllowedCalls(src, allowed))
 }
 
 // collectCalls is the shared implementation behind CollectRepoCalls / CollectServiceCalls.
@@ -65,6 +79,91 @@ func collectCalls(src string, direct []*regexp.Regexp, aliases map[string]struct
 		}
 	}
 	return out
+}
+
+func collectAllowedCalls(src string, allowed []string) map[string]struct{} {
+	out := make(map[string]struct{})
+	aliases := make(map[string]struct{})
+	for _, raw := range allowed {
+		recv, field, method, ok := splitCallPattern(raw)
+		if !ok {
+			continue
+		}
+		for _, name := range collectDirectAllowedCalls(src, recv, field, method) {
+			out[name] = struct{}{}
+		}
+		for alias := range collectAllowedAliasNames(src, recv, field) {
+			aliases[alias] = struct{}{}
+		}
+	}
+	for alias := range aliases {
+		re := regexp.MustCompile(fmt.Sprintf(aliasExportedMethodCallT, regexp.QuoteMeta(alias)))
+		for _, m := range re.FindAllStringSubmatch(src, -1) {
+			out[m[1]] = struct{}{}
+		}
+	}
+	return out
+}
+
+func collectDirectAllowedCalls(src, recv, field, method string) []string {
+	re := regexp.MustCompile(
+		`\b` + callSegmentRegexp(recv) + `\.` + callSegmentRegexp(field) + `\.` + callMethodRegexp(method) + `\(`,
+	)
+	var out []string
+	for _, m := range re.FindAllStringSubmatch(src, -1) {
+		if method == "*" {
+			out = append(out, m[1])
+			continue
+		}
+		out = append(out, method)
+	}
+	return out
+}
+
+func collectAllowedAliasNames(src, recv, field string) map[string]struct{} {
+	out := make(map[string]struct{})
+	re := regexp.MustCompile(`\b(\w+)\s*:?=\s*` + callSegmentRegexp(recv) + `\.` + callSegmentRegexp(field) + `\b`)
+	for _, loc := range re.FindAllStringSubmatchIndex(src, -1) {
+		if len(loc) < 4 {
+			continue
+		}
+		if !isAliasRHS(src, loc[1]) {
+			continue
+		}
+		out[src[loc[2]:loc[3]]] = struct{}{}
+	}
+	return out
+}
+
+func callSegmentRegexp(segment string) string {
+	if segment == "*" {
+		return `\w+`
+	}
+	return regexp.QuoteMeta(segment)
+}
+
+func callMethodRegexp(method string) string {
+	if method == "*" {
+		return `([A-Za-z0-9_]+)`
+	}
+	return regexp.QuoteMeta(method)
+}
+
+func splitCallPattern(p string) (recv, field, method string, ok bool) {
+	p = strings.TrimSpace(p)
+	if p == "" {
+		return "", "", "", false
+	}
+	parts := strings.Split(p, ".")
+	if len(parts) != 3 {
+		return "", "", "", false
+	}
+	for _, part := range parts {
+		if part == "" {
+			return "", "", "", false
+		}
+	}
+	return parts[0], parts[1], parts[2], true
 }
 
 func collectRepoAliasNames(src string) map[string]struct{} {

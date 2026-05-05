@@ -57,6 +57,42 @@ func Violations(dir string, cfg lintconfig.Config, projectRoot string) ([]Violat
 	return filterSuppressed(vs), nil
 }
 
+// CallPatternViolations checks only the call-pattern rule for a single package
+// directory. It is used by portsmith gen before writing ports.go, where running
+// the full linter would be too broad because some rules depend on generated
+// ports.go already being current.
+func CallPatternViolations(dir string, cfg lintconfig.Config) ([]Violation, error) {
+	entries, err := os.ReadDir(dir)
+	if err != nil {
+		return nil, err
+	}
+
+	var vs []Violation
+	fset := token.NewFileSet()
+	for _, e := range entries {
+		if e.IsDir() || !strings.HasSuffix(e.Name(), ".go") || strings.HasSuffix(e.Name(), "_test.go") {
+			continue
+		}
+		path := filepath.Join(dir, e.Name())
+		f, err := parser.ParseFile(fset, path, nil, parser.ParseComments)
+		if err != nil {
+			continue
+		}
+		ctx := CheckContext{
+			Dir:      dir,
+			Fset:     fset,
+			File:     f,
+			FilePath: path,
+			FileName: e.Name(),
+			Config:   cfg,
+		}
+		vs = append(vs, checkCallPatterns(ctx)...)
+	}
+
+	vs = filterRulesOff(vs, cfg)
+	return filterSuppressed(vs), nil
+}
+
 func filterRulesOff(vs []Violation, cfg lintconfig.Config) []Violation {
 	var out []Violation
 	for _, v := range vs {
