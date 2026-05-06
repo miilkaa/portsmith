@@ -5,7 +5,7 @@ import (
 	"go/ast"
 	"strings"
 
-	"github.com/miilkaa/portsmith/internal/lintconfig"
+	"github.com/miilkaa/portsmith/internal/project"
 )
 
 func checkCallPatterns(ctx CheckContext) []Violation {
@@ -16,7 +16,7 @@ func checkCallPatterns(ctx CheckContext) []Violation {
 		return nil
 	}
 
-	var layerCfg lintconfig.LayerCallConfig
+	var layerCfg project.LayerCallConfig
 	var layerLabel string
 	if isHandler {
 		layerCfg = ctx.Config.Lint.CallPatterns.Handler

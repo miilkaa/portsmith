@@ -7,7 +7,7 @@ import (
 	"testing"
 
 	"github.com/miilkaa/portsmith/internal/lint"
-	"github.com/miilkaa/portsmith/internal/lintconfig"
+	"github.com/miilkaa/portsmith/internal/project"
 )
 
 func TestViolations_rule5_repositoryPortInHandler(t *testing.T) {
@@ -36,9 +36,9 @@ import "testing"
 func TestY(t *testing.T) {}
 `)
 
-	cfg := lintconfig.Config{
-		Lint: lintconfig.LintConfig{
-			Rules: map[string]lintconfig.RuleConfig{
+	cfg := project.Config{
+		Lint: project.LintConfig{
+			Rules: map[string]project.RuleConfig{
 				"test-files": {Severity: "off"},
 			},
 		},
@@ -63,9 +63,9 @@ func TestViolations_rule7_maxLines(t *testing.T) {
 	dir := t.TempDir()
 	body := "package p\nconst x = 1\n"
 	write(t, dir, "tiny.go", body)
-	cfg := lintconfig.Config{
-		Lint: lintconfig.LintConfig{
-			MaxLines: []lintconfig.FileSizeRule{
+	cfg := project.Config{
+		Lint: project.LintConfig{
+			MaxLines: []project.FileSizeRule{
 				{Pattern: "*.go", Limit: 1},
 			},
 		},
@@ -85,7 +85,7 @@ func TestViolations_loggerRules_disabledWithoutConfig(t *testing.T) {
 import "log"
 func f() { log.Print("x") }
 `)
-	cfg := lintconfig.Config{}
+	cfg := project.Config{}
 	vs, err := lint.Violations(dir, cfg, dir)
 	if err != nil {
 		t.Fatal(err)
@@ -103,9 +103,9 @@ func TestViolations_loggerRules_importAndFmt(t *testing.T) {
 import "log"
 func f() { fmt.Printf("%s", "x") }
 `)
-	cfg := lintconfig.Config{
-		Lint: lintconfig.LintConfig{
-			Logger: lintconfig.LoggerConfig{Allowed: "log/slog"},
+	cfg := project.Config{
+		Lint: project.LintConfig{
+			Logger: project.LoggerConfig{Allowed: "log/slog"},
 		},
 	}
 	vs, err := lint.Violations(dir, cfg, dir)
@@ -132,9 +132,9 @@ func TestViolations_loggerRules_slogNew(t *testing.T) {
 import "log/slog"
 func f() { _ = slog.New(nil) }
 `)
-	cfg := lintconfig.Config{
-		Lint: lintconfig.LintConfig{
-			Logger: lintconfig.LoggerConfig{Allowed: "log/slog"},
+	cfg := project.Config{
+		Lint: project.LintConfig{
+			Logger: project.LoggerConfig{Allowed: "log/slog"},
 		},
 	}
 	vs, err := lint.Violations(dir, cfg, dir)
@@ -163,9 +163,9 @@ func (s *Service) SetClient(client Client) {}
 func (s *Service) WithDeps(deps *Deps) *Service { return s }
 func (s *Service) Do(input string) error { return nil }
 `)
-	cfg := lintconfig.Config{
-		Lint: lintconfig.LintConfig{
-			Rules: map[string]lintconfig.RuleConfig{
+	cfg := project.Config{
+		Lint: project.LintConfig{
+			Rules: map[string]project.RuleConfig{
 				"test-files": {Severity: "off"},
 			},
 		},
@@ -213,13 +213,13 @@ import "testing"
 func TestY(t *testing.T) {}
 `)
 
-	cfg := lintconfig.Config{
-		Lint: lintconfig.LintConfig{
-			Rules: map[string]lintconfig.RuleConfig{
+	cfg := project.Config{
+		Lint: project.LintConfig{
+			Rules: map[string]project.RuleConfig{
 				"test-files": {Severity: "off"},
 			},
-			CallPatterns: lintconfig.CallPatternsConfig{
-				Handler: lintconfig.LayerCallConfig{
+			CallPatterns: project.CallPatternsConfig{
+				Handler: project.LayerCallConfig{
 					Allowed:    []string{"*.svc.*"},
 					NotAllowed: []string{"*.service.*"},
 				},
@@ -269,13 +269,13 @@ import "testing"
 func TestY(t *testing.T) {}
 `)
 
-	cfg := lintconfig.Config{
-		Lint: lintconfig.LintConfig{
-			Rules: map[string]lintconfig.RuleConfig{
+	cfg := project.Config{
+		Lint: project.LintConfig{
+			Rules: map[string]project.RuleConfig{
 				"test-files": {Severity: "off"},
 			},
-			CallPatterns: lintconfig.CallPatternsConfig{
-				Handler: lintconfig.LayerCallConfig{
+			CallPatterns: project.CallPatternsConfig{
+				Handler: project.LayerCallConfig{
 					NotAllowed: []string{"*.service.*"},
 				},
 			},
@@ -318,13 +318,13 @@ import "testing"
 func TestY(t *testing.T) {}
 `)
 
-	cfg := lintconfig.Config{
-		Lint: lintconfig.LintConfig{
-			Rules: map[string]lintconfig.RuleConfig{
+	cfg := project.Config{
+		Lint: project.LintConfig{
+			Rules: map[string]project.RuleConfig{
 				"test-files": {Severity: "off"},
 			},
-			CallPatterns: lintconfig.CallPatternsConfig{
-				Handler: lintconfig.LayerCallConfig{
+			CallPatterns: project.CallPatternsConfig{
+				Handler: project.LayerCallConfig{
 					NotAllowed: []string{"*.service.*"},
 				},
 			},
@@ -352,9 +352,9 @@ type Handler struct{ db *gorm.DB }
 	write(t, dir, "repository.go", `package orders`)
 	write(t, dir, "ports.go", `package orders`)
 
-	cfg := lintconfig.Config{
-		Lint: lintconfig.LintConfig{
-			Rules: map[string]lintconfig.RuleConfig{
+	cfg := project.Config{
+		Lint: project.LintConfig{
+			Rules: map[string]project.RuleConfig{
 				"test-files": {Severity: "off"},
 			},
 		},

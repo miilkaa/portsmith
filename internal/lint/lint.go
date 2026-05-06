@@ -8,12 +8,12 @@ import (
 	"path/filepath"
 	"strings"
 
-	"github.com/miilkaa/portsmith/internal/gen"
-	"github.com/miilkaa/portsmith/internal/lintconfig"
+	"github.com/miilkaa/portsmith/internal/analyze"
+	"github.com/miilkaa/portsmith/internal/project"
 )
 
 // Violations checks a single package directory and returns all violations (before severity filtering).
-func Violations(dir string, cfg lintconfig.Config, projectRoot string) ([]Violation, error) {
+func Violations(dir string, cfg project.Config, projectRoot string) ([]Violation, error) {
 	var vs []Violation
 	vs = append(vs, checkPortsPresence(dir)...)
 	vs = append(vs, checkPortsComplete(dir)...)
@@ -26,7 +26,7 @@ func Violations(dir string, cfg lintconfig.Config, projectRoot string) ([]Violat
 
 	vs = append(vs, checkFileSizes(dir, projectRoot, cfg)...)
 
-	modulePath, _ := gen.DetectModulePath(projectRoot)
+	modulePath, _ := analyze.DetectModulePath(projectRoot)
 	layers := discoverLayerTypes(dir)
 
 	fset := token.NewFileSet()
@@ -61,7 +61,7 @@ func Violations(dir string, cfg lintconfig.Config, projectRoot string) ([]Violat
 // directory. It is used by portsmith gen before writing ports.go, where running
 // the full linter would be too broad because some rules depend on generated
 // ports.go already being current.
-func CallPatternViolations(dir string, cfg lintconfig.Config) ([]Violation, error) {
+func CallPatternViolations(dir string, cfg project.Config) ([]Violation, error) {
 	entries, err := os.ReadDir(dir)
 	if err != nil {
 		return nil, err
@@ -93,10 +93,10 @@ func CallPatternViolations(dir string, cfg lintconfig.Config) ([]Violation, erro
 	return filterSuppressed(vs), nil
 }
 
-func filterRulesOff(vs []Violation, cfg lintconfig.Config) []Violation {
+func filterRulesOff(vs []Violation, cfg project.Config) []Violation {
 	var out []Violation
 	for _, v := range vs {
-		if cfg.Lint.RuleSeverity(v.Rule) == lintconfig.SeverityOff {
+		if cfg.Lint.RuleSeverity(v.Rule) == project.SeverityOff {
 			continue
 		}
 		out = append(out, v)
