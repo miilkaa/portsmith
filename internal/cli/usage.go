@@ -12,7 +12,7 @@ Usage:
       Prompt language follows LC_ALL / LC_MESSAGES / LANG.
       --force   overwrite an existing portsmith.yaml
 
-  portsmith gen   [--dry-run] [--all] [--scan-callers] [<pkg-dir>...]
+  portsmith gen   [--dry-run] [--scan-callers] [<pkg-dir|pattern>...]
       Generate ports.go for one or more packages.
 
   portsmith new   [--stack gin-gorm|chi-sqlx] <pkg-dir>

@@ -194,6 +194,108 @@ func TestRun_generatesMultiplePackages(t *testing.T) {
 	}
 }
 
+func TestRun_generatesPackagesFromGlob(t *testing.T) {
+	root := t.TempDir()
+	writeFile(t, root, "go.mod", "module example.com/app\n\ngo 1.22\n")
+	writePackage(t, filepath.Join(root, "internal", "alpha"))
+	writePackage(t, filepath.Join(root, "internal", "beta"))
+	writeFile(t, filepath.Join(root, "internal", "shared"), "helper.go", "package shared\n")
+
+	wd, err := os.Getwd()
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := os.Chdir(root); err != nil {
+		t.Fatal(err)
+	}
+	defer func() {
+		if err := os.Chdir(wd); err != nil {
+			t.Fatalf("restore wd: %v", err)
+		}
+	}()
+
+	if err := Run([]string{"internal/*"}); err != nil {
+		t.Fatalf("glob generation should succeed: %v", err)
+	}
+	for _, dir := range []string{"alpha", "beta"} {
+		if _, err := os.Stat(filepath.Join(root, "internal", dir, "ports.go")); err != nil {
+			t.Fatalf("%s ports.go should be generated: %v", dir, err)
+		}
+	}
+	if _, err := os.Stat(filepath.Join(root, "internal", "shared", "ports.go")); !os.IsNotExist(err) {
+		t.Fatalf("non-generation package should be skipped, stat err: %v", err)
+	}
+}
+
+func TestRun_generatesPackagesFromRecursivePattern(t *testing.T) {
+	root := t.TempDir()
+	writeFile(t, root, "go.mod", "module example.com/app\n\ngo 1.22\n")
+	writePackage(t, filepath.Join(root, "internal", "alpha"))
+	writePackage(t, filepath.Join(root, "internal", "nested", "beta"))
+	writeFile(t, filepath.Join(root, "internal", "shared"), "helper.go", "package shared\n")
+
+	wd, err := os.Getwd()
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := os.Chdir(root); err != nil {
+		t.Fatal(err)
+	}
+	defer func() {
+		if err := os.Chdir(wd); err != nil {
+			t.Fatalf("restore wd: %v", err)
+		}
+	}()
+
+	if err := Run([]string{"./internal/..."}); err != nil {
+		t.Fatalf("recursive generation should succeed: %v", err)
+	}
+	for _, dir := range []string{
+		filepath.Join("internal", "alpha"),
+		filepath.Join("internal", "nested", "beta"),
+	} {
+		if _, err := os.Stat(filepath.Join(root, dir, "ports.go")); err != nil {
+			t.Fatalf("%s ports.go should be generated: %v", dir, err)
+		}
+	}
+	if _, err := os.Stat(filepath.Join(root, "internal", "shared", "ports.go")); !os.IsNotExist(err) {
+		t.Fatalf("non-generation package should be skipped, stat err: %v", err)
+	}
+}
+
+func TestRun_skipsNonGenerationPackagesFromExpandedGlob(t *testing.T) {
+	root := t.TempDir()
+	writeFile(t, root, "go.mod", "module example.com/app\n\ngo 1.22\n")
+	writePackage(t, filepath.Join(root, "internal", "alpha"))
+	writePackage(t, filepath.Join(root, "internal", "beta"))
+	writeFile(t, filepath.Join(root, "internal", "shared"), "helper.go", "package shared\n")
+
+	wd, err := os.Getwd()
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := os.Chdir(root); err != nil {
+		t.Fatal(err)
+	}
+	defer func() {
+		if err := os.Chdir(wd); err != nil {
+			t.Fatalf("restore wd: %v", err)
+		}
+	}()
+
+	if err := Run([]string{"internal/alpha", "internal/shared", "internal/beta"}); err != nil {
+		t.Fatalf("generation from expanded glob should succeed: %v", err)
+	}
+	for _, dir := range []string{"alpha", "beta"} {
+		if _, err := os.Stat(filepath.Join(root, "internal", dir, "ports.go")); err != nil {
+			t.Fatalf("%s ports.go should be generated: %v", dir, err)
+		}
+	}
+	if _, err := os.Stat(filepath.Join(root, "internal", "shared", "ports.go")); !os.IsNotExist(err) {
+		t.Fatalf("non-generation package should be skipped, stat err: %v", err)
+	}
+}
+
 func TestRun_verbosePrintsProgressToStderr(t *testing.T) {
 	root := t.TempDir()
 	writeFile(t, root, "go.mod", "module example.com/app\n\ngo 1.22\n")

@@ -60,6 +60,10 @@ internal/lint
 
 Rule IDs are user-facing API. They appear in `portsmith.yaml` and `//nolint:portsmith:<rule>` comments. Keep the docs and implementation in sync when changing rules.
 
+## Change Discipline
+
+When the request is to review logic, run tests, or update tests around existing work, do not change production implementation unless explicitly asked. If an implementation change looks necessary in that situation, ask first and explain the proposed change before editing files.
+
 ## Documentation Conventions
 
 - Go comments are in English.

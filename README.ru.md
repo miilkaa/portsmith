@@ -90,7 +90,7 @@ your-app/
 ```bash
 portsmith init  [--force]
 portsmith new   [--stack gin-gorm|chi-sqlx] <pkg-dir>
-portsmith gen   [--dry-run] [--all] [--scan-callers] [<pkg-dir>...]
+portsmith gen   [--dry-run] [--scan-callers] [<pkg-dir|pattern>...]
 portsmith mock  [<pkg-dir>...]
 portsmith check [--stack gin-gorm|chi-sqlx] [<pkg-dir>...]
 portsmith version

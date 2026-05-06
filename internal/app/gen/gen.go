@@ -5,7 +5,7 @@ import (
 	"fmt"
 	"os"
 	"path/filepath"
-	"sort"
+	"strings"
 	"time"
 
 	"github.com/miilkaa/portsmith/internal/analyze"
@@ -16,7 +16,6 @@ import (
 // Run executes the gen command with the given arguments.
 func Run(args []string) error {
 	dryRun := false
-	all := false
 	scanCallers := false
 	verbose := false
 	var dirs []string
@@ -25,8 +24,6 @@ func Run(args []string) error {
 		switch a {
 		case "--dry-run":
 			dryRun = true
-		case "--all":
-			all = true
 		case "--scan-callers":
 			scanCallers = true
 		case "-v", "--verbose":
@@ -36,22 +33,13 @@ func Run(args []string) error {
 		}
 	}
 
-	if all {
-		matches, _ := filepath.Glob("internal/*")
-		for _, m := range matches {
-			fi, err := os.Stat(m)
-			if err != nil || !fi.IsDir() {
-				continue
-			}
-			if hasFiles(m, "handler.go", "service.go", "repository.go") {
-				dirs = append(dirs, m)
-			}
-		}
-		sort.Strings(dirs)
+	dirs, err := resolveGenDirs(dirs)
+	if err != nil {
+		return err
 	}
 
 	if len(dirs) == 0 {
-		return fmt.Errorf("no package directories specified (use --all or provide paths)")
+		return fmt.Errorf("no package directories specified")
 	}
 
 	progress := newProgressLogger(verbose)
@@ -102,6 +90,94 @@ func Run(args []string) error {
 	}
 	return nil
 }
+
+func resolveGenDirs(ptrns []string) ([]string, error) {
+	seen := make(map[string]bool)
+	var res []string
+
+	add := func(dir string) {
+		dir = filepath.Clean(dir)
+		if !seen[dir] {
+			seen[dir] = true
+			res = append(res, dir)
+		}
+	}
+
+	addIfGenPackage := func(dir string) bool {
+		if hasFiles(dir, "handler.go", "service.go", "repository.go") {
+			add(dir)
+			return true
+		}
+		return false
+	}
+
+	walkGenPackages := func(root string) error {
+		root = filepath.Clean(root)
+		return filepath.WalkDir(root, func(path string, d os.DirEntry, err error) error {
+			if err != nil || !d.IsDir() {
+				return err
+			}
+			switch filepath.Base(path) {
+			case ".git", "vendor":
+				return filepath.SkipDir
+			}
+			addIfGenPackage(path)
+			return nil
+		})
+	}
+
+	for _, p := range ptrns {
+		if p == "./..." || p == "..." {
+			if err := walkGenPackages("."); err != nil {
+				return nil, err
+			}
+			continue
+		}
+
+		if strings.HasSuffix(p, "/...") {
+			root := strings.TrimSuffix(p, "/...")
+			if root == "" {
+				root = "."
+			}
+			if err := walkGenPackages(root); err != nil {
+				return nil, err
+			}
+			continue
+		}
+
+		if hasGlob(p) {
+			matches, err := filepath.Glob(p)
+			if err != nil {
+				return nil, err
+			}
+			if len(matches) == 0 {
+				return nil, fmt.Errorf("pattern %q matched no package directories", p)
+			}
+			matchedPackage := false
+			for _, m := range matches {
+				if addIfGenPackage(m) {
+					matchedPackage = true
+				}
+			}
+			if !matchedPackage {
+				return nil, fmt.Errorf("pattern %q matched no package directories", p)
+			}
+			continue
+		}
+
+		if fi, err := os.Stat(p); err == nil && fi.IsDir() {
+			addIfGenPackage(p)
+			continue
+		}
+		add(p)
+	}
+	return res, nil
+}
+
+func hasGlob(ptrn string) bool {
+	return strings.ContainsAny(ptrn, "*?[")
+}
+
 func hasFiles(dir string, names ...string) bool {
 	for _, n := range names {
 		if _, err := os.Stat(filepath.Join(dir, n)); err != nil {
