@@ -16,7 +16,7 @@ func checkPortsPresence(dir string) []Violation {
 		File:    filepath.Join(dir, "ports.go"),
 		Line:    0,
 		Message: "ports.go is missing — run: portsmith gen " + dir,
-			Rule:    "ports-required",
+		Rule:    "ports-required",
 	}}
 }
 

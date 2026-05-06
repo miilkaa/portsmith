@@ -8,11 +8,11 @@ import (
 // knownLoggingImports lists third-party and std logging packages the linter recognizes.
 // Only these are considered by logger-no-other; other imports are ignored.
 var knownLoggingImports = map[string]struct{}{
-	"log":                          {},
-	"log/slog":                     {},
-	"go.uber.org/zap":              {},
-	"github.com/sirupsen/logrus":   {},
-	"github.com/rs/zerolog":        {},
+	"log":                        {},
+	"log/slog":                   {},
+	"go.uber.org/zap":            {},
+	"github.com/sirupsen/logrus": {},
+	"github.com/rs/zerolog":      {},
 }
 
 func checkLoggerRules(ctx CheckContext) []Violation {

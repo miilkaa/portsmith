@@ -5,7 +5,7 @@ import (
 	"go/token"
 	"strconv"
 
-	"github.com/miilkaa/portsmith/internal/lintconfig"
+	"github.com/miilkaa/portsmith/internal/project"
 )
 
 // Violation describes a single architectural rule violation.
@@ -33,5 +33,5 @@ type CheckContext struct {
 	FilePath    string
 	FileName    string
 	Layers      LayerTypes
-	Config      lintconfig.Config
+	Config      project.Config
 }

@@ -1,167 +1,120 @@
 # Руководство по архитектуре
 
-Этот документ объясняет подход Clean Architecture, применяемый в проектах на основе portsmith.
+Этот документ описывает архитектуру, которую portsmith ожидает в сгенерированных и проверяемых Go-пакетах.
 
-## Правило зависимостей
+portsmith — CLI-only toolkit. Он не предоставляет runtime-пакеты; сгенерированный код использует Gin, GORM, Chi, sqlx и стандартную библиотеку напрямую.
 
-**Зависимости всегда направлены внутрь.** Внешние слои знают про внутренние; внутренние слои не знают ничего о внешних.
+## Правило Зависимостей
 
-```
-Handler → ServicePort ← Service → RepositoryPort ← Repository
-   ↑                                                     ↑
-HTTP-слой                                           Слой данных
-(знает gin)                                         (знает gorm)
+Зависимости направлены внутрь:
 
-              Service + ports = Доменный слой
-              (не знает ни про HTTP, ни про SQL)
+```text
+Handler -> ServicePort <- Service -> RepositoryPort <- Repository
 ```
 
-Стрелки показывают **направление импортов**. Если вы видите импорт `net/http` внутри `service.go` или `gorm` внутри `handler.go` — это нарушение архитектуры.
+Стрелки показывают направление импортов. Если `service.go` импортирует HTTP-пакеты, а `handler.go` импортирует database-пакеты, структура нарушена.
 
-## Слои и их правила
+## Технологические Стеки
 
-### Доменный слой (ядро)
+portsmith поддерживает два стека для scaffold/check:
+
+- `gin-gorm`: Gin handlers и GORM repositories.
+- `chi-sqlx`: Chi handlers и sqlx repositories.
+
+Stack можно задать в `portsmith.yaml`:
+
+```yaml
+stack: chi-sqlx
+```
+
+или через `--stack` в `portsmith new` / `portsmith check`.
+
+## Слои
+
+### Domain Layer
 
 Файлы: `domain.go`, `errors.go`
 
-- Чистые Go-типы — структуры, перечисления, константы
-- Запрещены импорты `database/sql`, `net/http`, `gorm`, `gin`
-- GORM struct-теги допустимы (прагматичный компромисс ради AutoMigrate)
-- Доменные ошибки используют конструкторы `apperrors`, но не содержат HTTP-кодов
+- Domain structs, enums, constants и domain errors.
+- Не импортирует HTTP routers или database clients.
+- Stack-specific struct tags допустимы, когда нужны generated repository code.
 
-### Слой интерфейсов
+### Interface Layer
 
-Файл: `ports.go` — **генерируется командой `portsmith gen`**
+Файл: `ports.go`, генерируется через `portsmith gen`.
 
-- Определяет интерфейсы `XxxRepository` и `XxxService`
-- Содержит только те методы, которые реально вызываются потребляющим слоем (минимальные интерфейсы)
-- Compile-time assertions: `var _ XxxRepository = (*Repository)(nil)`
+- Определяет минимальные интерфейсы `XxxRepository` и `XxxService`.
+- Содержит только методы, которые реально использует потребляющий слой.
+- Сохраняет compile-time assertions, что concrete types реализуют generated ports.
 
-### Сервисный слой
+### Service Layer
 
 Файл: `service.go`
 
-- Реализует бизнес-логику
-- Зависит от интерфейса `XxxRepository`, никогда от конкретного `*Repository`
-- Нет SQL, нет HTTP
-- Возвращает доменные ошибки, никогда `gorm.ErrRecordNotFound`
+- Реализует business logic.
+- Зависит от repository interfaces, а не concrete repositories.
+- Не импортирует HTTP packages или SQL/database clients.
 
-### Слой репозитория
+### Repository Layer
 
 Файл: `repository.go`
 
-- Реализует интерфейс `XxxRepository`
-- Единственный слой, которому разрешено использовать `gorm` или `database/sql`
-- Транслирует ошибки хранилища в доменные ошибки (напр. `gorm.ErrRecordNotFound` → `ErrUserNotFound`)
-- Нет бизнес-логики — только доступ к данным
+- Реализует repository interfaces.
+- Может использовать GORM, sqlx, `database/sql` или другие storage clients.
+- Транслирует storage errors в domain-level errors.
+- Не содержит HTTP logic.
 
-### Слой хендлера
+### Handler Layer
 
-Файлы: `handler.go`, `dto.go`, `mappers.go`
+Файлы: `handler.go`, `dto.go`, опционально mapper files.
 
-- Реализует HTTP-эндпоинты
-- Зависит от интерфейса `XxxService`, никогда от конкретного `*Service`
-- Единственный слой, которому разрешено использовать `gin` или `net/http`
-- Цикл: HTTP-запрос → доменные параметры → вызов сервиса → доменный результат → HTTP-ответ
-- Нет бизнес-логики, нет SQL
+- Реализует HTTP endpoints.
+- Зависит от service interfaces, а не concrete services.
+- Может использовать Gin, Chi, `net/http`, DTO и request/response helpers.
+- Не импортирует database clients.
 
-## Сборка зависимостей (Dependency Injection)
+## Wiring
 
-Всё собирается вручную в `main.go`:
-
-```go
-db, _ := database.Connect(cfg)
-database.Register(db, &user.User{})
-
-repo := user.NewRepository(db.DB())  // *Repository удовлетворяет UserRepository
-svc  := user.NewService(repo)        // *Service  удовлетворяет UserService
-h    := user.NewHandler(svc)
-
-srv := server.New(server.Config{Port: 8080})
-h.Routes(srv.Router().Group("/api/v1"))
-srv.Run()
-```
-
-Конструкторы всегда принимают интерфейсы, а не конкретные типы:
+Зависимости собираются вручную в application code:
 
 ```go
-func NewService(repo UserRepository) *Service  // ✓
-func NewHandler(svc UserService) *Handler      // ✓
-
-func NewService(repo *Repository) *Service     // ✗ — нарушает тестируемость
+repo := orders.NewRepository(db)
+svc := orders.NewService(repo)
+h := orders.NewHandler(svc)
 ```
 
-## Проверка архитектуры
-
-Запустите `portsmith check` для верификации правил (печатается выбранный stack; переопределение: `--stack`):
-
-```bash
-portsmith check ./internal/...
-```
-
-**Серьёзность:** по умолчанию все правила — `error` (код выхода 1). Переопределение в `portsmith.yaml`: `lint.rules.<id>.severity: error | warning | off`.
-
-**Подавление в коде** (следующая строка или конец строки с кодом):
+Конструкторы на границах слоев должны принимать interfaces:
 
 ```go
-//nolint:portsmith:handler-no-db
-import "gorm.io/gorm"
+func NewService(repo OrderRepository) *Service
+func NewHandler(svc OrderService) *Handler
 ```
 
-### Основные правила
+## Основные Правила
 
 | Rule id | Смысл |
 |---|---|
-| `ports-required` | Нужен `ports.go`, если есть `handler.go`, `service.go`, `repository.go` |
-| `handler-no-db` | В handler-файлах нельзя импортировать драйверы БД (`database/sql`, `gorm`, `sqlx`) |
-| `service-no-http` | В `service.go` нельзя импортировать HTTP и роутеры |
-| `no-concrete-fields` | Поля `Handler` / `Service` — не конкретные `*Service`, `*Repository`, `*Handler` |
-| `layer-dependency` | `Handler` не зависит от типов слоя репозитория; `Service` — от типов handler-слоя (карта типов пакета + суффиксы) |
-| `type-placement` | Экспортируемые struct в `repository*.go` / `service.go` — только «своего» слоя по имени |
-| `file-size` | Лимит строк (опционально `lint.max_lines`) |
-| `cross-imports` | Импорты `internal/...` только из allowlist (`lint.allowed_cross_imports`) |
-| `constructor-injection` | Конструкторы принимают порты-интерфейсы, не `*` на слой |
-| `test-files` | Наличие `service_test.go` / `handler_test.go` |
-| `no-panic` | Запрет `panic()` в `service*.go` / `repository*.go` |
-| `context-first` | У экспортируемых методов `*Service` / `*Repository` первый параметр — `context.Context`; wiring/configuration-методы `Set*` и `With*` игнорируются |
-| `method-count` | Лимит экспортируемых методов (`lint.max_methods`) |
-| `wiring-isolation` | Вызовы `New*Repository` / `New*Service` / `New*Handler` только в wiring-файлах (`lint.wiring.allowed_files`) |
-| `call-pattern` | Опционально: запрет/шаблоны для `recv.field.method()` в handler/service (`lint.call_patterns`; см. ниже) |
+| `ports-required` | нужен `ports.go`, если есть handler, service и repository файлы |
+| `ports-complete` | generated ports должны соответствовать методам, которые используют handlers/services |
+| `handler-no-db` | handlers не импортируют database clients |
+| `service-no-http` | services не импортируют HTTP packages или routers |
+| `no-concrete-fields` | handlers/services хранят interfaces, а не concrete layer pointers |
+| `layer-dependency` | handlers не зависят от repository types; services не зависят от handler types |
+| `type-placement` | exported layer structs живут в файлах своего слоя |
+| `file-size` | опциональный лимит строк в файле |
+| `cross-imports` | опциональный allowlist для `internal/...` cross imports |
+| `constructor-injection` | constructors принимают interfaces на границах слоев |
+| `test-files` | service/handler test files должны существовать |
+| `no-panic` | запрет `panic()` в service/repository files |
+| `context-first` | exported service/repository methods принимают `context.Context` первым |
+| `method-count` | опциональный лимит exported methods на service/handler |
+| `wiring-isolation` | layer constructors вызываются только из wiring files |
+| `logger-no-other` | опциональное правило canonical logger import |
+| `logger-no-fmt-print` | опциональное правило structured logging |
+| `logger-no-init` | опциональное правило logger initialization |
+| `call-pattern` | опциональное правило для `receiver.field.method()` calls |
 
-### Правила логирования (opt-in)
-
-**По умолчанию выключены.** Укажите `lint.logger.allowed` — канонический import-путь логгера (например `log/slog`). Включаются три правила с `error`, пока не переопределите в `lint.rules`. Действуют на **все** не-тестовые `.go` файлы пакета.
-
-| Rule id | Смысл |
-|---|---|
-| `logger-no-other` | Запрет известных пакетов логирования (`log`, `log/slog`, `zap`, `logrus`, `zerolog`), кроме указанного в `allowed` |
-| `logger-no-fmt-print` | Запрет `fmt.Print*` / `fmt.Fprint*` вместо логгера |
-| `logger-no-init` | Запрет `<pkg>.New(...)` для разрешённого пакета (например `slog.New`); `slog.Default().With(...)` разрешён |
-
-Реализация: пакет [`internal/lint`](../../internal/lint), CLI — [`cmd/portsmith/check`](../../cmd/portsmith/check/check.go).
-
-### Правила шаблонов вызовов (opt-in)
-
-**Выключены по умолчанию**, пока у слоя не задан непустой список `lint.call_patterns.<слой>.not_allowed`. Проверяют именование **трёхуровневых вызовов** `receiver.field.method()`:
-
-- **Handler:** файлы `handler*.go`, кроме `handler_test.go`
-- **Service:** только **`service.go`**
-
-Это **не** файловый glob: в паттерне ровно **три сегмента** через точку. Сегмент `*` — любой один Go-идентификатор.
-
-| Паттерн | Смысл |
-|--------|--------|
-| `h.svc.*` | Ресивер только `h`, поле только `svc`, имя метода любое |
-| `*.svc.*` | Любой ресивер, поле `svc`, имя метода любое |
-| `*.service.*` | Любой ресивер, поле `service`, имя метода любое |
-
-| Rule id | Смысл |
-|---|---|
-| `call-pattern` | Паттерны из `not_allowed` дают нарушение; `allowed` — только подсказка в сообщении (`use "..." instead`), не строгий белый список (меньше ложных срабатываний на вызовы вроде `req.Header.Get`) |
-
-Учитываются только **прямые** вызовы `recv.field.Method()`; локальные алиасы (`x := h.svc; x.Method()`) не анализируются. Некорректные паттерны (не три сегмента) при сопоставлении игнорируются. По умолчанию severity — `error` при включении; переопределение: `lint.rules.call-pattern.severity`.
-
-### Секция `lint` в `portsmith.yaml` (опционально)
+## Конфигурация
 
 ```yaml
 stack: chi-sqlx
@@ -169,18 +122,13 @@ lint:
   max_lines:
     - pattern: "repository*.go"
       limit: 800
-    - file: "internal/orders/repository.go"
-      limit: 1200
   max_methods:
     - pattern: "service.go"
       limit: 25
-  allowed_cross_imports:
-    "repository*.go":
-      - "internal/shared"
   wiring:
     allowed_files:
-      - "module.go"
       - "wire.go"
+      - "app.go"
   logger:
     allowed: "log/slog"
   call_patterns:
@@ -195,7 +143,13 @@ lint:
       not_allowed:
         - "*.repository.*"
   rules:
-    test-files:     { severity: warning }
-    context-first:  { severity: warning }
-    method-count:   { severity: warning }
+    test-files: { severity: warning }
+```
+
+Severity values: `error`, `warning`, `off`.
+
+Inline suppression:
+
+```go
+//nolint:portsmith:handler-no-db
 ```

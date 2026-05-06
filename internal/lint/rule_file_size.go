@@ -7,10 +7,10 @@ import (
 	"path/filepath"
 	"strings"
 
-	"github.com/miilkaa/portsmith/internal/lintconfig"
+	"github.com/miilkaa/portsmith/internal/project"
 )
 
-func checkFileSizes(dir string, projectRoot string, cfg lintconfig.Config) []Violation {
+func checkFileSizes(dir string, projectRoot string, cfg project.Config) []Violation {
 	if len(cfg.Lint.MaxLines) == 0 {
 		return nil
 	}
@@ -48,7 +48,7 @@ func checkFileSizes(dir string, projectRoot string, cfg lintconfig.Config) []Vio
 	return vs
 }
 
-func resolveLineLimit(relPath, base string, rules []lintconfig.FileSizeRule) int {
+func resolveLineLimit(relPath, base string, rules []project.FileSizeRule) int {
 	var best int
 	for _, r := range rules {
 		if r.File != "" && filepath.ToSlash(r.File) == relPath {
