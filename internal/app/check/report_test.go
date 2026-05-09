@@ -7,6 +7,7 @@ import (
 	"strings"
 	"testing"
 
+	appviolations "github.com/miilkaa/portsmith/internal/app/violations"
 	"github.com/miilkaa/portsmith/internal/lint"
 )
 
@@ -45,7 +46,7 @@ func TestViolationSummary_sortsRuleCounts(t *testing.T) {
 		{Rule: "handler-no-db"},
 	}
 
-	got := violationSummary(errs, warns)
+	got := appviolations.Summary(errs, warns)
 	want := "3 violation(s) — handler-no-db: 2, service-no-http: 1\n"
 	if got != want {
 		t.Fatalf("summary = %q, want %q", got, want)
